@@ -1396,7 +1396,7 @@ function renderConnections(layout, branchColors){
       const busColor = members.length===2
         ? blendColors(branchColors[members[0]]||'#5b6178', branchColors[members[1]]||'#5b6178')
         : (branchColors[members[0]] || '#5b6178');
-      busJobs.push({members, kids, lineStartY, parentMidX, stubYBase, minX, maxX, busColor});
+      busJobs.push({members, kids, extraKids, lineStartY, parentMidX, stubYBase, minX, maxX, busColor});
     });
   });
 
@@ -1415,24 +1415,70 @@ function renderConnections(layout, branchColors){
     activeByRow.push({stubYBase: job.stubYBase, maxX: job.maxX, offset: job.offset});
   });
 
+  // Metro-map styling: a real transit diagram never turns a sharp right
+  // angle -- a line runs straight, then cuts a short 45deg corner exactly
+  // where it changes direction, then runs straight again. Only the two
+  // outermost verticals on a bus (wherever the horizontal trunk actually
+  // ends) are real direction changes and get that chamfered corner; every
+  // other vertical -- the parent's own, or an interior child -- just meets
+  // the trunk in a plain T, the way a stop sits along a through-line.
+  const CHAMFER = 14;
+  function chamferedVerticalPath(x, yFar, yStub, towardTrunk){
+    // yFar: the far (card/heart) end of the run; yStub: the bus height,
+    // where the chamfered turn onto the trunk happens; towardTrunk: +1 if
+    // the trunk continues to the right of x, -1 if it continues left
+    const r = Math.min(CHAMFER, Math.abs(yStub-yFar));
+    const dir = yStub > yFar ? 1 : -1;
+    return `M ${x} ${yFar} L ${x} ${yStub - dir*r} L ${x + towardTrunk*r} ${yStub}`;
+  }
+
   busJobs.forEach(job=>{
-    const {members, kids, lineStartY, parentMidX, minX, maxX, busColor} = job;
+    const {members, kids, extraKids, lineStartY, parentMidX, minX, maxX, busColor} = job;
     const stubY = job.stubYBase + job.offset;
-    // vertical from parent down to bus
-    svg.appendChild(svgEl('line',{x1:parentMidX,y1:lineStartY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2}));
-    // horizontal bus
-    if(maxX>minX){
-      svg.appendChild(svgEl('line',{x1:minX,y1:stubY,x2:maxX,y2:stubY,stroke:busColor,'stroke-width':2}));
+    const hasTrunk = maxX > minX;
+    const atMin = x => hasTrunk && Math.abs(x-minX) < 0.5;
+    const atMax = x => hasTrunk && Math.abs(x-maxX) < 0.5;
+
+    // parent's own vertical: chamfered only if it happens to sit at either
+    // end of the trunk (rare -- a parent is usually centered over its kids
+    // and simply crosses the trunk as a straight-through stop)
+    if(atMin(parentMidX) || atMax(parentMidX)){
+      const toward = atMin(parentMidX) ? 1 : -1;
+      svg.appendChild(svgEl('path',{d:chamferedVerticalPath(parentMidX, lineStartY, stubY, toward), fill:'none', stroke:busColor,'stroke-width':2}));
+    } else {
+      svg.appendChild(svgEl('line',{x1:parentMidX,y1:lineStartY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2}));
     }
+
+    // the trunk itself, shortened at whichever ends are chamfered so the
+    // diagonal cut and the straight run don't overlap
+    if(hasTrunk){
+      const left = minX + (atMin(parentMidX) || kids.some(cid=>atMin(cardMidLeftRight(cid))) ? CHAMFER : 0);
+      const right = maxX - (atMax(parentMidX) || kids.some(cid=>atMax(cardMidLeftRight(cid))) ? CHAMFER : 0);
+      if(right > left) svg.appendChild(svgEl('line',{x1:left,y1:stubY,x2:right,y2:stubY,stroke:busColor,'stroke-width':2}));
+    }
+
     kids.forEach(cid=>{
       const top = cardCenterTop(cid);
       const conn = state.connections.find(c=>c.type==='parent-child' && c.to===cid && members.includes(c.from));
       const style = PC_STYLE[(conn&&conn.subtype)||'biological'];
       const x = cardMidLeftRight(cid);
-      const line = svgEl('line',{x1:x,y1:stubY,x2:top.x,y2:top.y,stroke:busColor,'stroke-width':2,'stroke-dasharray':style.dash==='none'?'':style.dash,opacity:style.opacity});
-      svg.appendChild(line);
+      const dashAttrs = {'stroke-dasharray':style.dash==='none'?'':style.dash, opacity:style.opacity};
+      if(atMin(x) || atMax(x)){
+        const toward = atMin(x) ? 1 : -1;
+        svg.appendChild(svgEl('path',{d:chamferedVerticalPath(x, top.y, stubY, toward), fill:'none', stroke:busColor,'stroke-width':2, ...dashAttrs}));
+      } else {
+        svg.appendChild(svgEl('line',{x1:x,y1:stubY,x2:top.x,y2:top.y,stroke:busColor,'stroke-width':2,...dashAttrs}));
+      }
       if(conn && editMode){
         badges.push({x:x,y:(stubY+top.y)/2, id:conn.id, label: conn.label || capitalize(conn.subtype||'biological')});
+      }
+      // an "extra" connection is a second line arriving at a card that
+      // already sits on its own (canonical) line -- mark it like a metro
+      // interchange: a hollow ring in this line's color, right where it
+      // meets the card, so the second relationship reads as a deliberate
+      // transfer point rather than a stray line touching a random card.
+      if(extraKids.includes(cid)){
+        svg.appendChild(svgEl('circle',{cx:top.x,cy:top.y,r:7,fill:'#0b0d13',stroke:busColor,'stroke-width':2}));
       }
     });
   });
