@@ -1083,6 +1083,13 @@ function computeLayout(){
 let lastLayout = null;
 
 function render(){
+  // guard against dangling connections left over from data edited outside
+  // the app, or from before cascade-delete existed -- a connection
+  // referencing a person id that's gone would otherwise poison the layout
+  // (NaN generations, a crash walking a "unit" that's actually undefined)
+  const validIds = new Set(state.people.map(p=>p.id));
+  state.connections = state.connections.filter(c=>validIds.has(c.from) && validIds.has(c.to) && c.from!==c.to);
+
   document.getElementById('emptyState').style.display = state.people.length ? 'none':'block';
   lastLayout = computeLayout();
   const branchColors = computeBranchColors(lastLayout);
