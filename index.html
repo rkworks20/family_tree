@@ -71,11 +71,33 @@ input,select,textarea{font-family:inherit;}
 #editToggle.on .sw::after{left:17px;background:#0b0d13;}
 #editToggle.on{color:var(--success);border-color:var(--success);}
 
-#zoomLabel{font-size:12px;color:var(--muted);min-width:42px;text-align:center;}
-
 #topbar-spacer{flex:1;}
 #saveState{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px;}
-#saveState .pip{width:6px;height:6px;border-radius:50%;background:var(--success);}
+.pip{width:6px;height:6px;border-radius:50%;background:var(--success);flex-shrink:0;}
+
+#hamburgerBtn{display:none;}
+#mobileMenu{
+  display:none;position:fixed;top:64px;right:10px;z-index:60;
+  flex-direction:column;gap:1px;min-width:180px;
+  background:var(--panel2);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:6px;
+}
+#mobileMenu.open{display:flex;}
+#mobileMenu button{
+  background:none;border:none;color:var(--text);text-align:left;padding:10px 10px;border-radius:8px;
+  font-size:13px;cursor:pointer;
+}
+#mobileMenu button:hover{background:var(--accent-soft);}
+#mobileMenu .mm-sep{height:1px;background:var(--border-soft);margin:4px 4px;}
+#mobileMenu .mm-status{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;padding:6px 10px 2px;}
+
+#addPersonFab{
+  display:none;position:fixed;right:20px;bottom:20px;z-index:45;
+  width:56px;height:56px;border-radius:50%;
+  background:var(--accent);color:#0b0d13;border:none;
+  font-size:28px;line-height:1;font-weight:600;
+  align-items:center;justify-content:center;box-shadow:var(--shadow);cursor:pointer;
+}
+#addPersonFab:active{filter:brightness(1.1);transform:translateY(1px);}
 
 /* ---------- Canvas ---------- */
 #viewport{
@@ -234,13 +256,6 @@ input,select,textarea{font-family:inherit;}
 #emptyState h2{color:var(--text);font-size:20px;margin-bottom:6px;}
 #emptyState p{font-size:13px;}
 
-/* ---------- Zoom controls ---------- */
-#zoomCtrl{
-  position:fixed;right:16px;bottom:16px;z-index:40;display:flex;flex-direction:column;gap:6px;
-  background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:6px;
-}
-#zoomCtrl .btn{width:34px;height:34px;justify-content:center;padding:0;font-size:16px;}
-
 .toast{
   position:fixed;top:70px;left:50%;transform:translateX(-50%);background:var(--panel2);
   border:1px solid var(--border);border-radius:10px;padding:9px 16px;font-size:12px;z-index:300;
@@ -259,10 +274,13 @@ input,select,textarea{font-family:inherit;}
   #editToggle .sw{width:30px;height:17px;}
   #editToggle .sw::after{width:13px;height:13px;}
   #editToggle.on .sw::after{left:15px;}
-  /* keep the toolbar's essentials reachable without a scroll; low-priority
-     labels collapse to their icon (still has a title="" tooltip) */
-  #saveState{display:none;}
-  #legendBtnLabel, #arrangeBtnLabel{display:none;}
+
+  /* header keeps just the title + Edit Mode toggle; everything else moves
+     into the hamburger menu, and Add Person becomes the floating circle
+     button so it's reachable with a thumb from anywhere on the canvas */
+  .tb-group, .tb-sep, #saveState{display:none;}
+  #hamburgerBtn{display:inline-flex;}
+  #addPersonFab{display:flex;}
 
   .card .mini{width:30px;height:30px;font-size:14px;}
   .card .addmenu button{padding:10px 12px;font-size:13px;}
@@ -272,7 +290,6 @@ input,select,textarea{font-family:inherit;}
   .field input, .field select, .field textarea, .seg span{font-size:16px;}
   .modal{padding:16px;}
 
-  #zoomCtrl{right:10px;bottom:10px;}
   #legend{left:10px;bottom:10px;max-width:180px;font-size:10px;}
 
   #emptyState{padding:0 24px;}
@@ -308,7 +325,21 @@ input,select,textarea{font-family:inherit;}
   <div id="topbar-spacer"></div>
 
   <div id="saveState"><span class="pip"></span><span id="saveStateText">Saved</span></div>
+
+  <button class="btn icon" id="hamburgerBtn" onclick="toggleMobileMenu()" title="Menu">☰</button>
 </div>
+
+<div id="mobileMenu">
+  <button onclick="autoArrange();closeMobileMenu();">⤢ Auto-arrange</button>
+  <button onclick="toggleLegend();closeMobileMenu();">? Legend</button>
+  <div class="mm-sep"></div>
+  <button onclick="exportJSON();closeMobileMenu();">⬇ Export</button>
+  <button onclick="document.getElementById('importFile').click();closeMobileMenu();">⬆ Import</button>
+  <div class="mm-sep"></div>
+  <div class="mm-status"><span class="pip"></span><span id="mobileSaveStateText">Saved</span></div>
+</div>
+
+<button id="addPersonFab" onclick="openAddRootPerson()" title="Add Person">+</button>
 
 <div id="viewport">
   <div id="world">
@@ -329,13 +360,6 @@ input,select,textarea{font-family:inherit;}
   <div class="li">Partner status (Married, Engaged, Divorced, etc.) shows as a small pill between the couple's cards</div>
 </div>
 
-<div id="zoomCtrl">
-  <button class="btn" onclick="zoomBy(1.2)">+</button>
-  <div id="zoomLabel">100%</div>
-  <button class="btn" onclick="zoomBy(1/1.2)">−</button>
-  <button class="btn" onclick="fitToScreen()" title="Fit to screen">⤢</button>
-  <button class="btn" onclick="resetView()" title="Reset">⟲</button>
-</div>
 
 <!-- Person / Relation modal -->
 <div class="overlay" id="personOverlay">
@@ -526,11 +550,11 @@ const LAYOUT = { cardW:172, cardH:150, colGap:46, rowGap:150, topMargin:60, left
    still usable, just not saved or shared.
    ========================================================================= */
 function setSaveStateUI(){
-  const pip = document.querySelector('#saveState .pip');
-  const text = document.getElementById('saveStateText');
-  if(dbStatus === 'ready'){ pip.style.background = 'var(--success)'; text.textContent = 'Synced to cloud'; }
-  else if(dbStatus === 'connecting'){ pip.style.background = 'var(--warn)'; text.textContent = 'Connecting…'; }
-  else { pip.style.background = 'var(--danger)'; text.textContent = 'Cloud unavailable — local only'; }
+  const color = dbStatus === 'ready' ? 'var(--success)' : dbStatus === 'connecting' ? 'var(--warn)' : 'var(--danger)';
+  const label = dbStatus === 'ready' ? 'Synced to cloud' : dbStatus === 'connecting' ? 'Connecting…' : 'Cloud unavailable — local only';
+  document.querySelectorAll('#saveState .pip, #mobileMenu .pip').forEach(pip=>{ pip.style.background = color; });
+  document.getElementById('saveStateText').textContent = label;
+  document.getElementById('mobileSaveStateText').textContent = label;
 }
 
 function personFields(p){
@@ -1010,7 +1034,17 @@ document.addEventListener('click', (e)=>{
   if(!e.target.closest('.addmenu') && !e.target.closest('.mini')){
     document.querySelectorAll('.addmenu.open').forEach(m=>m.classList.remove('open'));
   }
+  if(!e.target.closest('#mobileMenu') && !e.target.closest('#hamburgerBtn')){
+    closeMobileMenu();
+  }
 });
+
+function toggleMobileMenu(){
+  document.getElementById('mobileMenu').classList.toggle('open');
+}
+function closeMobileMenu(){
+  document.getElementById('mobileMenu').classList.remove('open');
+}
 
 /* ----- connection line styles ----- */
 const PC_STYLE = {
@@ -1410,7 +1444,6 @@ async function quickRemoveConn(connId){
    ========================================================================= */
 function applyTransform(){
   document.getElementById('world').style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
-  document.getElementById('zoomLabel').textContent = Math.round(view.scale*100)+'%';
 }
 function zoomBy(factor, cx, cy){
   const vp = document.getElementById('viewport');
