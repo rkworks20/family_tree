@@ -1264,8 +1264,8 @@ function renderConnections(layout, branchColors){
     const x2 = layout.pos[members[1]].x;
     const mx = (x1+x2)/2;
     const color = blendColors(branchColors[members[0]]||'#8b91a7', branchColors[members[1]]||'#8b91a7');
-    svg.appendChild(svgEl('line',{x1:x1-LAYOUT.cardW/2+AVATAR_R,y1:y,x2:mx-13,y2:y,stroke:'#4a4f66','stroke-width':1.5,'stroke-dasharray':'3,4'}));
-    svg.appendChild(svgEl('line',{x1:mx+13,y1:y,x2:x2+LAYOUT.cardW/2-AVATAR_R,y2:y,stroke:'#4a4f66','stroke-width':1.5,'stroke-dasharray':'3,4'}));
+    svg.appendChild(svgEl('line',{x1:x1-LAYOUT.cardW/2+AVATAR_R,y1:y,x2:mx-9,y2:y,stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,4'}));
+    svg.appendChild(svgEl('line',{x1:mx+9,y1:y,x2:x2+LAYOUT.cardW/2-AVATAR_R,y2:y,stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,4'}));
     partnerBadges.push({x:mx, y:y, id:conn.id, color, outline:conn.subtype==='divorced'||conn.subtype==='separated', title: conn.label || capitalize(conn.subtype||'partner')});
   });
 
