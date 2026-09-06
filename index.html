@@ -977,19 +977,44 @@ function computeLayout(){
   // separate (unconnected) family branches wrap onto a new super-row once a
   // row gets too wide, instead of sprawling into one mile-long horizontal
   // strip with huge dead space wherever a tall-and-narrow branch sits next
-  // to a short-and-wide one
+  // to a short-and-wide one. Unrelated branches get a much wider gap than
+  // actual siblings, plus a dashed divider line, so it's never ambiguous
+  // which cards belong to which family.
   const MAX_ROW_WIDTH = 2600;
-  let rowX = LAYOUT.leftMargin, rowOffsetGen = 0, rowMaxGen = 0;
-  rootUnits.forEach(k=>{
-    const w = unitWidth(k);
-    if(rowX > LAYOUT.leftMargin && rowX + w > MAX_ROW_WIDTH){
-      rowOffsetGen += rowMaxGen + 2; // previous super-row's height + a blank row of breathing room
-      rowMaxGen = 0;
-      rowX = LAYOUT.leftMargin;
+  const BRANCH_GAP = 170;
+  const branchDividers = {vertical:[], horizontal:[]};
+
+  // pass 1: group root units into rows
+  const rows = [];
+  {
+    let row = [], rowW = LAYOUT.leftMargin;
+    rootUnits.forEach(k=>{
+      const w = unitWidth(k);
+      if(row.length && rowW + w > MAX_ROW_WIDTH){ rows.push(row); row = []; rowW = LAYOUT.leftMargin; }
+      row.push(k);
+      rowW += w + BRANCH_GAP;
+    });
+    if(row.length) rows.push(row);
+  }
+
+  // pass 2: place each row and record divider geometry
+  let rowOffsetGen = 0;
+  rows.forEach((row, rowIdx)=>{
+    let x = LAYOUT.leftMargin, rowMaxGenLocal = 0;
+    const rowDividerXs = [];
+    row.forEach((k,i)=>{
+      placeUnit(k, x, rowOffsetGen);
+      rowMaxGenLocal = Math.max(rowMaxGenLocal, unitMaxGen(k));
+      x += unitWidth(k) + BRANCH_GAP;
+      if(i < row.length-1) rowDividerXs.push(x - BRANCH_GAP/2);
+    });
+    const rowTop = LAYOUT.topMargin + rowOffsetGen*rowH - 20;
+    const rowBottom = LAYOUT.topMargin + (rowOffsetGen+rowMaxGenLocal)*rowH + LAYOUT.cardH + 20;
+    rowDividerXs.forEach(dx=>branchDividers.vertical.push({x:dx, y1:rowTop, y2:rowBottom}));
+    rowOffsetGen += rowMaxGenLocal + 3; // extra blank row between super-rows, for the horizontal divider
+    if(rowIdx < rows.length-1){
+      branchDividers.horizontal.push({y: rowBottom + (rowH*1.5), x1: LAYOUT.leftMargin-30, x2: x-BRANCH_GAP+30});
     }
-    placeUnit(k, rowX, rowOffsetGen);
-    rowMaxGen = Math.max(rowMaxGen, unitMaxGen(k));
-    rowX += w + SIBLING_GAP;
   });
 
   // any person somehow not placed (shouldn't normally happen) -> append
@@ -1003,7 +1028,7 @@ function computeLayout(){
     pos[p.id] = { x: s.x, y: LAYOUT.topMargin + s.gen*rowH };
   });
 
-  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, childOrdinal };
+  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, childOrdinal, branchDividers };
 }
 
 /* =========================================================================
@@ -1136,6 +1161,14 @@ function renderConnections(layout){
 
   const badges = []; // text-pill badges (parent-child), edit-mode only
   const partnerBadges = []; // "Married" style text pills, always visible (sit on the seam between partner cards)
+
+  // ---- dividers between unrelated (disconnected) family branches ----
+  (layout.branchDividers?.vertical || []).forEach(d=>{
+    svg.appendChild(svgEl('line',{x1:d.x,y1:d.y1,x2:d.x,y2:d.y2,stroke:'#3a3f52','stroke-width':1.5,'stroke-dasharray':'5,6'}));
+  });
+  (layout.branchDividers?.horizontal || []).forEach(d=>{
+    svg.appendChild(svgEl('line',{x1:d.x1,y1:d.y,x2:d.x2,y2:d.y,stroke:'#3a3f52','stroke-width':1.5,'stroke-dasharray':'5,6'}));
+  });
 
   // ---- canonical parent-unit -> children bus ----
   Object.keys(layout.unitMembers).forEach(unitKey=>{
