@@ -939,16 +939,28 @@ function computeLayout(){
     unitChildren[k].sort((a,b)=> siblingOrderKey(a)-siblingOrderKey(b));
   });
 
-  // birth-order among siblings sharing the same canonical parent unit (1-based)
+  // birth-order among siblings sharing the same canonical parent unit (1-based).
+  // This is the birth-sequence pill shown on a card -- it must stay tied to
+  // actual birth order (or the manual pin) and NEVER shift just because the
+  // crossing-minimization pass below moves someone sideways for readability,
+  // so it's computed here, once, from the birth-order-only sequence, before
+  // that pass gets any chance to touch sibling order.
   const childOrdinal = {};
   Object.keys(unitChildren).forEach(k=>{
     unitChildren[k].forEach((childId,i)=>{ childOrdinal[childId] = i+1; });
   });
 
+  // A second, independent copy of each unit's child order -- this is the one
+  // the layout below actually reads and is free to rearrange for crossing
+  // minimization, while unitChildren above (and childOrdinal) stay exactly
+  // as birth order/manual pins put them.
+  const visualChildren = {};
+  Object.keys(unitChildren).forEach(k=>{ visualChildren[k] = unitChildren[k].slice(); });
+
   // unit -> ordered list of child unit keys (deduped, first-appearance order)
   function childUnitsOf(unitKey){
     const seen = new Set(); const out = [];
-    (unitChildren[unitKey]||[]).forEach(childId=>{
+    (visualChildren[unitKey]||[]).forEach(childId=>{
       const cu = unitOf[childId];
       if(!seen.has(cu)){ seen.add(cu); out.push(cu); }
     });
@@ -999,7 +1011,7 @@ function computeLayout(){
     return maxG;
   }
 
-  // ---- tidy-tree layout (row-based) ----
+  // ---- tidy-tree coordinate assignment (row-based) ----
   // A naive "reserve a rectangular column sized to this subtree's widest
   // generation, center every other generation inside it" layout leaves a lot
   // of dead space around any generation narrower than its subtree's widest
@@ -1012,83 +1024,11 @@ function computeLayout(){
   // pass below is what actually guarantees no two cards ever collide, by
   // checking real placed positions row by row rather than reserving space
   // for a whole subtree's worst case up front.
-  function packSiblings(cus, gapFn, getLayout){
-    const placements = [];
-    let prevRight = null; // right edge of the previous sibling's own row, in this group's local coords
-    cus.forEach((cu,i)=>{
-      const lay = getLayout(cu);
-      let shift = 0;
-      if(i>0){
-        const gap = gapFn(cus[i-1], cu);
-        shift = (prevRight + gap) - lay.ownLeft;
-      }
-      placements.push({ cu, offsetX: shift, layout: lay });
-      prevRight = lay.ownRight + shift;
-    });
-    return { placements };
-  }
-
-  const layoutCache = {};
-  function layoutSubtree(k){
-    if(layoutCache[k]) return layoutCache[k];
-    const cus = childUnitsOf(k);
-    const selfW = unitSelfWidth(k);
-    let result;
-    if(cus.length === 0){
-      result = { rootX: selfW/2, ownLeft: 0, ownRight: selfW, children: [] };
-    } else {
-      const { placements } = packSiblings(cus, gapBetween, layoutSubtree);
-      const first = placements[0], last = placements[placements.length-1];
-      const rootX = ((first.offsetX+first.layout.rootX) + (last.offsetX+last.layout.rootX)) / 2;
-      result = { rootX, ownLeft: rootX - selfW/2, ownRight: rootX + selfW/2, children: placements };
-    }
-    layoutCache[k] = result;
-    return result;
-  }
-
-  // the forest of disconnected root branches is packed the same way, with
-  // the wider inter-branch gap standing in for the sibling gap
-  const BRANCH_GAP = 90;
-  const { placements: rootPlacements } = rootUnits.length
-    ? packSiblings(rootUnits, ()=>BRANCH_GAP, layoutSubtree)
-    : { placements: [] };
-
-  // pass 2: walk back down, turning each unit's relative offset into an
-  // absolute pixel X and recording final card positions.
-  const rowH = LAYOUT.cardH + LAYOUT.rowGap;
-  const posPx = {}; // personId -> {x, gen}  (x = card left-edge, in px)
-  function assignAbsolute(k, layoutInfo, originX){
-    const centerX = originX + layoutInfo.rootX;
-    const members = unitMembers[k];
-    const g = Math.max(...members.map(id=>gen[id]));
-    if(members.length === 2){
-      posPx[members[0]] = {x: centerX - LAYOUT.cardW, gen: g};
-      posPx[members[1]] = {x: centerX, gen: g};
-    } else {
-      posPx[members[0]] = {x: centerX - LAYOUT.cardW/2, gen: g};
-    }
-    layoutInfo.children.forEach(child=>assignAbsolute(child.cu, child.layout, originX + child.offsetX));
-  }
-
-  let rowMaxGen = 0;
-  rootPlacements.forEach(rp=>{
-    const originX = LAYOUT.leftMargin + rp.offsetX;
-    assignAbsolute(rp.cu, rp.layout, originX);
-    rowMaxGen = Math.max(rowMaxGen, unitMaxGen(rp.cu));
-  });
-
-  // ---- global per-row collision repair ----
-  // packSiblings above only compares each sibling against its immediate
-  // neighbor (see note there), which is intentionally optimistic -- it can
-  // under-shift when a non-adjacent, deeper generation would actually
-  // collide. This pass is the safety net: walk generations top to bottom,
-  // and within each row push any unit that's still too close to its
-  // left neighbor (checking real placed positions, not envelopes) further
-  // right, carrying its whole subtree with it. Because shallower rows are
-  // fully resolved before a deeper row is touched, and a push only ever
-  // moves a unit's own descendants (never its ancestors or anything to its
-  // left), a single top-to-bottom sweep is sufficient -- it can't undo a
-  // fix already made, and it never needs to run twice.
+  //
+  // unitParent/descendantUnitsOf only depend on WHICH units are whose
+  // children (a set), never on sibling ORDER, so they're computed once here
+  // and reused across every coordinate pass below, including the
+  // crossing-minimization re-sorts that follow.
   const unitParent = {};
   Object.keys(unitMembers).forEach(pu=>{ childUnitsOf(pu).forEach(cu=>{ unitParent[cu] = pu; }); });
   const descendantUnitsCache = {};
@@ -1099,58 +1039,274 @@ function computeLayout(){
     descendantUnitsCache[k] = list;
     return list;
   }
-  function shiftUnit(k, delta){
-    descendantUnitsOf(k).forEach(uk=>{
-      unitMembers[uk].forEach(pid=>{ posPx[pid].x += delta; });
-    });
-  }
-  const unitsByRow = {};
-  Object.keys(unitMembers).forEach(k=>{
-    const g = posPx[unitMembers[k][0]].gen;
-    (unitsByRow[g] = unitsByRow[g] || []).push(k);
-  });
-  Object.keys(unitsByRow).map(Number).sort((a,b)=>a-b).forEach(g=>{
-    const rowUnits = unitsByRow[g].sort((a,b)=> posPx[unitMembers[a][0]].x - posPx[unitMembers[b][0]].x);
-    for(let i=1;i<rowUnits.length;i++){
-      const prevU = rowUnits[i-1], curU = rowUnits[i];
-      const prevRight = posPx[unitMembers[prevU][0]].x + unitSelfWidth(prevU);
-      const curLeft = posPx[unitMembers[curU][0]].x;
-      const sameParent = unitParent[prevU] !== undefined && unitParent[prevU] === unitParent[curU];
-      const minGap = sameParent ? gapBetween(prevU, curU) : BRANCH_GAP;
-      const deficit = (prevRight + minGap) - curLeft;
-      if(deficit > 0) shiftUnit(curU, deficit);
+  const BRANCH_GAP = 90;
+  const rowH = LAYOUT.cardH + LAYOUT.rowGap;
+
+  // Runs the full placement (pack siblings -> absolute X -> collision
+  // repair -> branch dividers) from whatever order rootUnits/visualChildren
+  // currently hold. Called more than once: the crossing-minimization pass
+  // below re-sorts those orders between calls to see the effect on real
+  // positions before settling on a final one.
+  function runCoordinatePass(){
+    const layoutCache = {};
+    function packSiblings(cus, gapFn, getLayout){
+      const placements = [];
+      let prevRight = null; // right edge of the previous sibling's own row, in this group's local coords
+      cus.forEach((cu,i)=>{
+        const lay = getLayout(cu);
+        let shift = 0;
+        if(i>0){
+          const gap = gapFn(cus[i-1], cu);
+          shift = (prevRight + gap) - lay.ownLeft;
+        }
+        placements.push({ cu, offsetX: shift, layout: lay });
+        prevRight = lay.ownRight + shift;
+      });
+      return { placements };
     }
-  });
+    function layoutSubtree(k){
+      if(layoutCache[k]) return layoutCache[k];
+      const cus = childUnitsOf(k);
+      const selfW = unitSelfWidth(k);
+      let result;
+      if(cus.length === 0){
+        result = { rootX: selfW/2, ownLeft: 0, ownRight: selfW, children: [] };
+      } else {
+        const { placements } = packSiblings(cus, gapBetween, layoutSubtree);
+        const first = placements[0], last = placements[placements.length-1];
+        const rootX = ((first.offsetX+first.layout.rootX) + (last.offsetX+last.layout.rootX)) / 2;
+        result = { rootX, ownLeft: rootX - selfW/2, ownRight: rootX + selfW/2, children: placements };
+      }
+      layoutCache[k] = result;
+      return result;
+    }
 
-  const branchDividers = {vertical:[], horizontal:[]};
-  const rootEdges = [];
-  rootPlacements.forEach(rp=>{
-    const peopleInSubtree = descendantUnitsOf(rp.cu).flatMap(uk=>unitMembers[uk]);
-    rootEdges.push({
-      left: Math.min(...peopleInSubtree.map(pid=>posPx[pid].x)),
-      right: Math.max(...peopleInSubtree.map(pid=>posPx[pid].x + LAYOUT.cardW)),
+    // the forest of disconnected root branches is packed the same way, with
+    // the wider inter-branch gap standing in for the sibling gap
+    const { placements: rootPlacements } = rootUnits.length
+      ? packSiblings(rootUnits, ()=>BRANCH_GAP, layoutSubtree)
+      : { placements: [] };
+
+    // walk back down, turning each unit's relative offset into an absolute
+    // pixel X and recording final card positions.
+    const posPx = {}; // personId -> {x, gen}  (x = card left-edge, in px)
+    function assignAbsolute(k, layoutInfo, originX){
+      const centerX = originX + layoutInfo.rootX;
+      const members = unitMembers[k];
+      const g = Math.max(...members.map(id=>gen[id]));
+      if(members.length === 2){
+        posPx[members[0]] = {x: centerX - LAYOUT.cardW, gen: g};
+        posPx[members[1]] = {x: centerX, gen: g};
+      } else {
+        posPx[members[0]] = {x: centerX - LAYOUT.cardW/2, gen: g};
+      }
+      layoutInfo.children.forEach(child=>assignAbsolute(child.cu, child.layout, originX + child.offsetX));
+    }
+
+    let rowMaxGen = 0;
+    rootPlacements.forEach(rp=>{
+      const originX = LAYOUT.leftMargin + rp.offsetX;
+      assignAbsolute(rp.cu, rp.layout, originX);
+      rowMaxGen = Math.max(rowMaxGen, unitMaxGen(rp.cu));
     });
-  });
-  const dividerTop = LAYOUT.topMargin - 20;
-  const dividerBottom = LAYOUT.topMargin + rowMaxGen*rowH + LAYOUT.cardH + 20;
-  for(let i=1;i<rootEdges.length;i++){
-    const dx = (rootEdges[i-1].right + rootEdges[i].left)/2;
-    branchDividers.vertical.push({x:dx, y1:dividerTop, y2:dividerBottom});
+
+    // ---- global per-row collision repair ----
+    // packSiblings above only compares each sibling against its immediate
+    // neighbor (see note there), which is intentionally optimistic -- it can
+    // under-shift when a non-adjacent, deeper generation would actually
+    // collide. This pass is the safety net: walk generations top to bottom,
+    // and within each row push any unit that's still too close to its
+    // left neighbor (checking real placed positions, not envelopes) further
+    // right, carrying its whole subtree with it. Because shallower rows are
+    // fully resolved before a deeper row is touched, and a push only ever
+    // moves a unit's own descendants (never its ancestors or anything to its
+    // left), a single top-to-bottom sweep is sufficient -- it can't undo a
+    // fix already made, and it never needs to run twice.
+    function shiftUnit(k, delta){
+      descendantUnitsOf(k).forEach(uk=>{
+        unitMembers[uk].forEach(pid=>{ posPx[pid].x += delta; });
+      });
+    }
+    const unitsByRow = {};
+    Object.keys(unitMembers).forEach(k=>{
+      const g = posPx[unitMembers[k][0]].gen;
+      (unitsByRow[g] = unitsByRow[g] || []).push(k);
+    });
+    Object.keys(unitsByRow).map(Number).sort((a,b)=>a-b).forEach(g=>{
+      const rowUnits = unitsByRow[g].sort((a,b)=> posPx[unitMembers[a][0]].x - posPx[unitMembers[b][0]].x);
+      for(let i=1;i<rowUnits.length;i++){
+        const prevU = rowUnits[i-1], curU = rowUnits[i];
+        const prevRight = posPx[unitMembers[prevU][0]].x + unitSelfWidth(prevU);
+        const curLeft = posPx[unitMembers[curU][0]].x;
+        const sameParent = unitParent[prevU] !== undefined && unitParent[prevU] === unitParent[curU];
+        const minGap = sameParent ? gapBetween(prevU, curU) : BRANCH_GAP;
+        const deficit = (prevRight + minGap) - curLeft;
+        if(deficit > 0) shiftUnit(curU, deficit);
+      }
+    });
+
+    const branchDividers = {vertical:[], horizontal:[]};
+    const rootEdges = [];
+    rootPlacements.forEach(rp=>{
+      const peopleInSubtree = descendantUnitsOf(rp.cu).flatMap(uk=>unitMembers[uk]);
+      rootEdges.push({
+        left: Math.min(...peopleInSubtree.map(pid=>posPx[pid].x)),
+        right: Math.max(...peopleInSubtree.map(pid=>posPx[pid].x + LAYOUT.cardW)),
+      });
+    });
+    const dividerTop = LAYOUT.topMargin - 20;
+    const dividerBottom = LAYOUT.topMargin + rowMaxGen*rowH + LAYOUT.cardH + 20;
+    for(let i=1;i<rootEdges.length;i++){
+      const dx = (rootEdges[i-1].right + rootEdges[i].left)/2;
+      branchDividers.vertical.push({x:dx, y1:dividerTop, y2:dividerBottom});
+    }
+    let cursor = rootEdges.length ? rootEdges[rootEdges.length-1].right + BRANCH_GAP : LAYOUT.leftMargin;
+
+    // any person somehow not placed (shouldn't normally happen) -> append
+    people.forEach(p=>{
+      if(!posPx[p.id]){ posPx[p.id] = {x: cursor, gen: gen[p.id]||0}; cursor += LAYOUT.cardW + SIBLING_GAP; }
+    });
+
+    const pos = {};
+    people.forEach(p=>{
+      const s = posPx[p.id];
+      pos[p.id] = { x: s.x, y: LAYOUT.topMargin + s.gen*rowH };
+    });
+
+    return { pos, posPx, branchDividers };
   }
-  let cursor = rootEdges.length ? rootEdges[rootEdges.length-1].right + BRANCH_GAP : LAYOUT.leftMargin;
 
-  // any person somehow not placed (shouldn't normally happen) -> append
-  people.forEach(p=>{
-    if(!posPx[p.id]){ posPx[p.id] = {x: cursor, gen: gen[p.id]||0}; cursor += LAYOUT.cardW + SIBLING_GAP; }
+  // ---- crossing minimization (barycenter heuristic) ----
+  // Standard layered-graph-drawing technique (Sugiyama et al.): reorder each
+  // row by the position of its neighbors in an adjacent row, repeated a
+  // bounded number of times. Here the only units with a real "neighbor
+  // signal" are non-hosting (cross-branch) parents -- someone whose actual
+  // child lives, positionally, under their spouse's own parents instead of
+  // theirs (see unitCanonicalChild above). Pulling that parent's own
+  // sibling/root position toward wherever their child really ended up is
+  // what keeps that relationship's connector line short instead of
+  // stretching across the whole tree. Every ordinary unit has no such
+  // signal and keeps exactly its birth-order/creation-order position --
+  // this only ever touches the units this session's bugs kept surfacing.
+  const extraParentTargets = {}; // unitKey -> [{fromId, childId}, ...] it's a non-hosting parent for
+  state.connections.filter(c=>c.type==='parent-child').forEach(c=>{
+    if(unitCanonicalChild[unitOf[c.to]] === c.to) return; // hosted normally, no signal needed
+    const pu = unitOf[c.from];
+    (extraParentTargets[pu] = extraParentTargets[pu] || []).push({fromId:c.from, childId:c.to});
   });
+  // how far a specific member's own card sits from their unit's center --
+  // the left member of a couple is 86px left of it, the right member 86px
+  // right, a solo person IS the center. Needed because the desired X below
+  // has to move the whole UNIT's center so that the specific connecting
+  // person (not just "the unit" in the abstract) lands on their child --
+  // using the unit's own center directly is wrong whenever the connecting
+  // parent isn't centered in their own couple, which is the normal case.
+  function memberOffset(pu, personId){
+    const members = unitMembers[pu];
+    if(members.length !== 2) return 0;
+    return members[0]===personId ? -LAYOUT.cardW/2 : LAYOUT.cardW/2;
+  }
 
-  const pos = {};
-  people.forEach(p=>{
-    const s = posPx[p.id];
-    pos[p.id] = { x: s.x, y: LAYOUT.topMargin + s.gen*rowH };
-  });
+  // Relocates ONLY the units that have a desiredX, one at a time, into
+  // whatever slot best matches that position among the list's OTHER
+  // members' actual current positions -- it never reorders two units that
+  // both lack a signal relative to each other. A full re-sort that compares
+  // "desired" positions against "current actual" positions in one pass is
+  // unstable: a signal unit's target can slide an untouched, unrelated wide
+  // branch into the middle of the list purely as a side effect of the
+  // comparator, which is exactly the kind of surprise this rewrite exists
+  // to get rid of. Returns whether it actually changed anything.
+  function relocateSignalUnits(list, desiredX, posXOf){
+    let changed = false;
+    Object.keys(desiredX).forEach(uk=>{
+      const at = list.indexOf(uk);
+      if(at === -1) return;
+      const rest = list.slice(0,at).concat(list.slice(at+1));
+      let insertAt = rest.length;
+      for(let i=0;i<rest.length;i++){
+        if(desiredX[uk] < posXOf(rest[i])){ insertAt = i; break; }
+      }
+      rest.splice(insertAt, 0, uk);
+      if(rest.some((v,i)=>v!==list[i])){
+        list.length = 0; list.push(...rest);
+        changed = true;
+      }
+    });
+    return changed;
+  }
 
-  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, unitCanonicalChild, childOrdinal, branchDividers };
+  // Crossing minimization is a heuristic, not an exact solver (one-sided
+  // crossing minimization is NP-hard -- see plan notes), and this tree has
+  // multiple cross-branch marriages whose desired positions pull against
+  // each other. A greedy, single-pass relocation can genuinely make one
+  // connection shorter while making another longer as a side effect. So
+  // this never applies a reordering blind: it scores the total length of
+  // every extra (cross-branch) connector before and after, and only keeps
+  // the new order if that total actually went down. Worst case, nothing
+  // changes and the layout is exactly the original birth-order/creation-
+  // order placement -- this pass can only ever help or be a no-op, never
+  // make the real layout worse than not having it at all.
+  function totalExtraSpan(posPx){
+    let total = 0;
+    Object.keys(extraParentTargets).forEach(pu=>{
+      extraParentTargets[pu].forEach(({fromId,childId})=>{
+        total += Math.abs(posPx[fromId].x - posPx[childId].x);
+      });
+    });
+    return total;
+  }
+
+  let result = runCoordinatePass();
+  if(Object.keys(extraParentTargets).length){
+    const baselineResult = result;
+    const baselineScore = totalExtraSpan(baselineResult.posPx);
+    const baselineRootUnits = rootUnits.slice();
+    const baselineVisualChildren = {};
+    Object.keys(visualChildren).forEach(k=>{ baselineVisualChildren[k] = visualChildren[k].slice(); });
+
+    const MAX_SWEEPS = 4; // small and bounded -- this always terminates
+    for(let sweep=0; sweep<MAX_SWEEPS; sweep++){
+      const posPx = result.posPx;
+      // A neighbor's comparison point for insertion is its whole subtree's
+      // LEFT edge, not its own row-0 card's center -- comparing against just
+      // the card would happily slot a relocated unit into the middle of a
+      // neighbor's much wider descendant rows (a solo root card is narrow;
+      // its six children two rows down are not), which only trades one
+      // long connector for a fresh collision the repair pass then has to
+      // push everyone apart to fix. Comparing against the full subtree's
+      // own left edge only ever inserts into a gap that's actually free.
+      const subtreeLeftEdge = k => Math.min(...descendantUnitsOf(k).flatMap(uk=>unitMembers[uk]).map(pid=>posPx[pid].x));
+      const desiredX = {};
+      Object.keys(extraParentTargets).forEach(pu=>{
+        const xs = extraParentTargets[pu].map(({fromId,childId})=>{
+          const childCenterX = posPx[childId].x + LAYOUT.cardW/2;
+          return childCenterX - memberOffset(pu, fromId);
+        });
+        desiredX[pu] = xs.reduce((a,b)=>a+b,0)/xs.length;
+      });
+      let anyListTouched = relocateSignalUnits(rootUnits, desiredX, subtreeLeftEdge);
+      Object.keys(visualChildren).forEach(pu=>{
+        const list = visualChildren[pu];
+        if(list.length<2) return;
+        const listAsUnits = list.map(cid=>unitOf[cid]);
+        if(!relocateSignalUnits(listAsUnits, desiredX, subtreeLeftEdge)) return;
+        const byUnit = {}; list.forEach(cid=>{ byUnit[unitOf[cid]] = cid; });
+        list.length = 0;
+        listAsUnits.forEach(uk=>list.push(byUnit[uk]));
+        anyListTouched = true;
+      });
+      if(!anyListTouched) break; // stable -- further sweeps would be no-ops
+      result = runCoordinatePass();
+    }
+
+    if(totalExtraSpan(result.posPx) >= baselineScore){
+      rootUnits.length = 0; rootUnits.push(...baselineRootUnits);
+      Object.keys(visualChildren).forEach(k=>{ visualChildren[k] = baselineVisualChildren[k]; });
+      result = baselineResult;
+    }
+  }
+
+  return { pos: result.pos, unitOf, unitMembers, layoutParentUnit, unitChildren, unitCanonicalChild, childOrdinal, branchDividers: result.branchDividers };
 }
 
 /* =========================================================================
