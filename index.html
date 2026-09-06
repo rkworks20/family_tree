@@ -826,9 +826,9 @@ function calcAge(dob){
   return age;
 }
 function fmtDob(dob){
-  if(!dob) return 'DOB unknown';
+  if(!dob) return ''; // no DOB set -- render nothing rather than "DOB unknown"
   const d = new Date(dob+'T00:00:00');
-  if(isNaN(d.getTime())) return 'DOB unknown';
+  if(isNaN(d.getTime())) return '';
   return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
 }
 function personConnections(id){
@@ -1191,7 +1191,7 @@ function renderCards(layout, branchColors){
       ${ordinal ? `<div class="mini-pill ordinal-pill" title="Birth order">${ordinalLabel(ordinal)}</div>` : ''}
       ${p.deceased ? `<div class="mini-pill rip-pill" title="Deceased">RIP</div>` : ''}
       <div class="name">${escapeHtml(p.name || 'Unnamed')}</div>
-      <div class="dob">${fmtDob(p.dob)}</div>
+      ${p.dob ? `<div class="dob">${fmtDob(p.dob)}</div>` : ''}
       <div class="age ${age===null?'unknown':''}">${age===null ? '' : 'Age '+age}</div>
       <div class="edit-row">
         <button class="mini" title="Edit" onclick="event.stopPropagation();openEditPerson('${p.id}')">✎</button>
