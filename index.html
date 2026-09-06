@@ -224,6 +224,19 @@ input,select,textarea{font-family:inherit;}
 }
 .photo-preview img{width:100%;height:100%;object-fit:cover;}
 .photo-preview svg{width:28px;height:28px;fill:var(--muted);}
+
+/* ---------- Photo crop modal ---------- */
+#cropStage{
+  position:relative;width:280px;height:280px;max-width:100%;margin:0 auto;overflow:hidden;
+  border-radius:12px;background:#000;cursor:grab;touch-action:none;border:1px solid var(--border-soft);
+}
+#cropStage.dragging{cursor:grabbing;}
+#cropImg{position:absolute;top:0;left:0;transform-origin:0 0;user-select:none;pointer-events:none;max-width:none;}
+#cropGuide{
+  position:absolute;inset:0;border-radius:50%;pointer-events:none;
+  box-shadow:0 0 0 9999px rgba(5,6,10,0.55);
+  outline:1px solid rgba(255,255,255,0.5);
+}
 .modal .row{display:flex;gap:8px;margin-top:16px;}
 .modal .row .btn{flex:1;justify-content:center;}
 .link-toggle{
@@ -447,6 +460,25 @@ input,select,textarea{font-family:inherit;}
     <div class="row">
       <button class="btn danger" onclick="removeConnFromModal()">Remove connection</button>
       <button class="btn primary" onclick="saveConnModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Photo crop modal -->
+<div class="overlay" id="cropOverlay">
+  <div class="modal" style="width:340px;">
+    <h3>Crop Photo</h3>
+    <div id="cropStage">
+      <img id="cropImg" draggable="false" alt="">
+      <div id="cropGuide"></div>
+    </div>
+    <div class="field" style="margin-top:14px;">
+      <label>Zoom</label>
+      <input type="range" id="cropZoom" min="0" max="100" value="0" oninput="onCropZoomInput(this.value)">
+    </div>
+    <div class="row">
+      <button class="btn" onclick="cancelCrop()">Cancel</button>
+      <button class="btn primary" onclick="confirmCrop()">Use Photo</button>
     </div>
   </div>
 </div>
@@ -1300,20 +1332,96 @@ function onPhotoSelected(evt){
   const reader = new FileReader();
   reader.onload = ()=>{
     const img = new Image();
-    img.onload = ()=>{
-      const size = 220;
-      const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const scale = Math.max(size/img.width, size/img.height);
-      const w = img.width*scale, h = img.height*scale;
-      ctx.drawImage(img, (size-w)/2, (size-h)/2, w, h);
-      pendingPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      updatePhotoPreview(pendingPhotoDataUrl);
-    };
+    img.onload = ()=> openCropModal(img);
     img.src = reader.result;
   };
   reader.readAsDataURL(file);
+}
+
+/* ----- interactive photo crop (drag to reposition, slider to zoom) ----- */
+const CROP_STAGE = 280, CROP_OUTPUT = 220;
+let cropState = null; // {img, scale, minScale, maxScale, offsetX, offsetY}
+
+function openCropModal(img){
+  const minScale = Math.max(CROP_STAGE/img.width, CROP_STAGE/img.height);
+  cropState = {
+    img, minScale, maxScale: minScale*3, scale: minScale,
+    offsetX: (CROP_STAGE - img.width*minScale)/2,
+    offsetY: (CROP_STAGE - img.height*minScale)/2,
+  };
+  document.getElementById('cropImg').src = img.src;
+  document.getElementById('cropZoom').value = 0;
+  renderCropTransform();
+  document.getElementById('cropOverlay').classList.add('open');
+}
+function renderCropTransform(){
+  const {scale, offsetX, offsetY} = cropState;
+  document.getElementById('cropImg').style.transform = `translate(${offsetX}px,${offsetY}px) scale(${scale})`;
+}
+function clampCropOffset(){
+  const {img, scale} = cropState;
+  const dispW = img.width*scale, dispH = img.height*scale;
+  cropState.offsetX = Math.min(0, Math.max(CROP_STAGE-dispW, cropState.offsetX));
+  cropState.offsetY = Math.min(0, Math.max(CROP_STAGE-dispH, cropState.offsetY));
+}
+function onCropZoomInput(v){
+  if(!cropState) return;
+  const {img, minScale, maxScale} = cropState;
+  // keep the stage's center point anchored in the image while zooming
+  const cx = (CROP_STAGE/2 - cropState.offsetX)/cropState.scale;
+  const cy = (CROP_STAGE/2 - cropState.offsetY)/cropState.scale;
+  cropState.scale = minScale + (maxScale-minScale)*(v/100);
+  cropState.offsetX = CROP_STAGE/2 - cx*cropState.scale;
+  cropState.offsetY = CROP_STAGE/2 - cy*cropState.scale;
+  clampCropOffset();
+  renderCropTransform();
+}
+(function setupCropDrag(){
+  const stage = document.getElementById('cropStage');
+  let dragging = false, startX=0, startY=0, startOffX=0, startOffY=0;
+  function down(x,y){
+    if(!cropState) return;
+    dragging = true; stage.classList.add('dragging');
+    startX=x; startY=y; startOffX=cropState.offsetX; startOffY=cropState.offsetY;
+  }
+  function move(x,y){
+    if(!dragging || !cropState) return;
+    cropState.offsetX = startOffX + (x-startX);
+    cropState.offsetY = startOffY + (y-startY);
+    clampCropOffset();
+    renderCropTransform();
+  }
+  function up(){ dragging=false; stage.classList.remove('dragging'); }
+  stage.addEventListener('mousedown', e=>{ down(e.clientX,e.clientY); e.preventDefault(); });
+  window.addEventListener('mousemove', e=>move(e.clientX,e.clientY));
+  window.addEventListener('mouseup', up);
+  stage.addEventListener('touchstart', e=>{ const t=e.touches[0]; down(t.clientX,t.clientY); }, {passive:true});
+  stage.addEventListener('touchmove', e=>{ const t=e.touches[0]; move(t.clientX,t.clientY); e.preventDefault(); }, {passive:false});
+  stage.addEventListener('touchend', up);
+  stage.addEventListener('wheel', e=>{
+    if(!cropState) return;
+    e.preventDefault();
+    const slider = document.getElementById('cropZoom');
+    const next = Math.min(100, Math.max(0, Number(slider.value) + (e.deltaY<0?5:-5)));
+    slider.value = next;
+    onCropZoomInput(next);
+  }, {passive:false});
+})();
+function confirmCrop(){
+  const {img, scale, offsetX, offsetY} = cropState;
+  const canvas = document.createElement('canvas');
+  canvas.width = CROP_OUTPUT; canvas.height = CROP_OUTPUT;
+  const ctx = canvas.getContext('2d');
+  const srcX = -offsetX/scale, srcY = -offsetY/scale, srcSize = CROP_STAGE/scale;
+  ctx.drawImage(img, srcX, srcY, srcSize, srcSize, 0, 0, CROP_OUTPUT, CROP_OUTPUT);
+  pendingPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  updatePhotoPreview(pendingPhotoDataUrl);
+  cancelCrop();
+}
+function cancelCrop(){
+  document.getElementById('cropOverlay').classList.remove('open');
+  cropState = null;
+  document.getElementById('fPhoto').value='';
 }
 function clearPhoto(){
   pendingPhotoDataUrl = null;
