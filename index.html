@@ -1295,12 +1295,24 @@ function openAddRelative(targetId, relType){
   document.getElementById('personModalTitle').textContent = `Add ${relLabel} of ${target.name||'this person'}`;
   document.getElementById('linkExistingWrap').style.display='flex';
 
-  // populate existing-person select (exclude the target itself)
+  // populate existing-person select (exclude the target itself), labeling
+  // anyone who's already related to the target so a duplicate connection
+  // isn't created by accident
   const sel = document.getElementById('existingPersonSelect');
   sel.innerHTML = '';
+  const existingParents = new Set(parentsOf(targetId));
+  const existingChildren = new Set(childrenOf(targetId));
+  const existingPartners = new Set(partnersOf(targetId));
   state.people.filter(p=>p.id!==targetId).forEach(p=>{
     const opt = document.createElement('option');
-    opt.value = p.id; opt.textContent = p.name || 'Unnamed';
+    opt.value = p.id;
+    let label = p.name || 'Unnamed';
+    const tags = [];
+    if(existingParents.has(p.id)) tags.push('parent');
+    if(existingChildren.has(p.id)) tags.push('child');
+    if(existingPartners.has(p.id)) tags.push('partner');
+    if(tags.length) label += ` (already ${tags.join(' & ')})`;
+    opt.textContent = label;
     sel.appendChild(opt);
   });
 
