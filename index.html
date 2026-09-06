@@ -1249,7 +1249,7 @@ function renderConnections(layout, branchColors){
     // only compare against jobs at the exact same base height
     while(activeByRow.length && activeByRow[0].stubYBase !== job.stubYBase) activeByRow.shift();
     const collider = activeByRow.find(j=>j.maxX > job.minX);
-    job.offset = collider ? collider.offset + 7 : 0;
+    job.offset = collider ? collider.offset + 18 : 0;
     activeByRow.push({stubYBase: job.stubYBase, maxX: job.maxX, offset: job.offset});
   });
 
