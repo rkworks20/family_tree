@@ -1006,17 +1006,6 @@ function computeLayout(){
     return (unitHasFamily(cuA) || unitHasFamily(cuB)) ? SIBLING_GAP : SIBLING_GAP_TIGHT;
   }
 
-  // how many generation-rows deep a unit's subtree reaches (0-based), used
-  // to size the divider between adjacent branches
-  const unitMaxGenCache = {};
-  function unitMaxGen(k){
-    if(unitMaxGenCache[k] !== undefined) return unitMaxGenCache[k];
-    let maxG = Math.max(...unitMembers[k].map(id=>gen[id]));
-    childUnitsOf(k).forEach(cu=>{ maxG = Math.max(maxG, unitMaxGen(cu)); });
-    unitMaxGenCache[k] = maxG;
-    return maxG;
-  }
-
   // ---- fixed-column coordinate assignment ----
   // Each unit reserves a rectangular column sized to its subtree's widest
   // generation; every shallower generation in that subtree is centered
@@ -1066,21 +1055,14 @@ function computeLayout(){
   }
 
   // separate (unconnected) family branches sit in a single horizontal row,
-  // tightly packed but with enough gap -- and a subtle dashed divider -- to
-  // stay visually distinct from a neighboring, unrelated branch.
+  // tightly packed but with enough gap to stay visually distinct from a
+  // neighboring, unrelated branch.
   const BRANCH_GAP = 90;
-  const branchDividers = {vertical:[], horizontal:[]};
-  let cursor = LAYOUT.leftMargin, rowMaxGen = 0;
-  const dividerXs = [];
-  rootUnits.forEach((k,i)=>{
+  let cursor = LAYOUT.leftMargin;
+  rootUnits.forEach(k=>{
     placeUnit(k, cursor);
-    rowMaxGen = Math.max(rowMaxGen, unitMaxGen(k));
     cursor += unitWidth(k) + BRANCH_GAP;
-    if(i < rootUnits.length-1) dividerXs.push(cursor - BRANCH_GAP/2);
   });
-  const dividerTop = LAYOUT.topMargin - 20;
-  const dividerBottom = LAYOUT.topMargin + rowMaxGen*rowH + LAYOUT.cardH + 20;
-  dividerXs.forEach(dx=>branchDividers.vertical.push({x:dx, y1:dividerTop, y2:dividerBottom}));
 
   // any person somehow not placed (shouldn't normally happen) -> append
   people.forEach(p=>{
@@ -1093,7 +1075,7 @@ function computeLayout(){
     pos[p.id] = { x: s.x, y: LAYOUT.topMargin + s.gen*rowH };
   });
 
-  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, unitCanonicalChild, childOrdinal, branchDividers };
+  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, unitCanonicalChild, childOrdinal };
 }
 
 /* =========================================================================
@@ -1274,14 +1256,6 @@ function renderConnections(layout, branchColors){
 
   const badges = []; // text-pill badges (parent-child), edit-mode only
   const partnerBadges = []; // "Married" style text pills, always visible (sit on the seam between partner cards)
-
-  // ---- dividers between unrelated (disconnected) family branches ----
-  (layout.branchDividers?.vertical || []).forEach(d=>{
-    svg.appendChild(svgEl('line',{x1:d.x,y1:d.y1,x2:d.x,y2:d.y2,stroke:'#3a3f52','stroke-width':1.5,'stroke-dasharray':'5,6'}));
-  });
-  (layout.branchDividers?.horizontal || []).forEach(d=>{
-    svg.appendChild(svgEl('line',{x1:d.x1,y1:d.y,x2:d.x2,y2:d.y,stroke:'#3a3f52','stroke-width':1.5,'stroke-dasharray':'5,6'}));
-  });
 
   // ---- canonical parent-unit -> children bus ----
   // Pass 1: gather each unit's bus geometry without drawing yet. Every unit
