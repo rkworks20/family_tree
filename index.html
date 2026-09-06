@@ -1350,26 +1350,54 @@ function renderConnections(layout, branchColors){
   const busJobs = [];
   Object.keys(layout.unitMembers).forEach(unitKey=>{
     const members = layout.unitMembers[unitKey];
-    const kids = layout.unitChildren[unitKey] || [];
-    if(kids.length === 0) return;
-    // for a couple, the vertical line down to the kids STARTS at the heart's
-    // height (44px, avatar-center) -- that X position sits in the gap
-    // between the two avatars, clear of either one's name/DOB text, all the
-    // way down. The horizontal bus itself, though, always sits below BOTH
-    // parents' full name/DOB text (LAYOUT.cardH), same as a solo parent --
-    // starting the line higher must not also drag the bus up into that text.
-    const lineStartY = layout.pos[members[0]].y + (members.length===2 ? 44 : LAYOUT.cardH);
-    const parentMidX = members.length===2
-      ? (cardMidLeftRight(members[0]) + cardMidLeftRight(members[1]))/2
-      : cardMidLeftRight(members[0]);
-    const stubYBase = layout.pos[members[0]].y + LAYOUT.cardH + LAYOUT.rowGap/2;
-    const childXs = kids.map(cid=>cardMidLeftRight(cid));
-    const minX = Math.min(...childXs, parentMidX);
-    const maxX = Math.max(...childXs, parentMidX);
-    const busColor = members.length===2
-      ? blendColors(branchColors[members[0]]||'#5b6178', branchColors[members[1]]||'#5b6178')
-      : (branchColors[members[0]] || '#5b6178');
-    busJobs.push({members, kids, lineStartY, parentMidX, stubYBase, minX, maxX, busColor});
+    // every child this unit should draw a bus to: the canonical children
+    // that also determine this unit's own width in the layout, plus any
+    // "extra" connections -- a second recorded parent, or a partner who
+    // lost the couple's hosting slot to their own spouse's parent (see
+    // unitCanonicalChild in computeLayout). Those still get a real
+    // right-angle bus line here, same as any other parent-child connector
+    // (no curves), just without affecting this unit's own position/width.
+    const canonicalKids = layout.unitChildren[unitKey] || [];
+    const extraKids = state.connections
+      .filter(c=>c.type==='parent-child' && layout.unitOf[c.from]===unitKey)
+      .map(c=>c.to)
+      .filter(cid=> !canonicalKids.includes(cid) && layout.pos[cid]);
+    const allKids = [...new Set([...canonicalKids, ...extraKids])];
+    if(allKids.length === 0) return;
+    // an extra connection isn't guaranteed to land exactly one row down
+    // (unlike a canonical child), so group kids by how many rows below this
+    // unit they actually sit and give each group its own bus at the real
+    // midpoint height -- a fixed one-row-down stub would misalign otherwise.
+    const rowH = LAYOUT.cardH + LAYOUT.rowGap;
+    const byRowGap = {};
+    allKids.forEach(cid=>{
+      const rows = Math.round((layout.pos[cid].y - layout.pos[members[0]].y) / rowH);
+      (byRowGap[rows] = byRowGap[rows] || []).push(cid);
+    });
+    Object.keys(byRowGap).forEach(rowsStr=>{
+      const rows = Number(rowsStr);
+      const kids = byRowGap[rowsStr];
+      // for a couple, the vertical line down to the kids STARTS at the heart's
+      // height (44px, avatar-center) -- that X position sits in the gap
+      // between the two avatars, clear of either one's name/DOB text, all the
+      // way down. The horizontal bus itself, though, always sits below BOTH
+      // parents' full name/DOB text (LAYOUT.cardH), same as a solo parent --
+      // starting the line higher must not also drag the bus up into that text.
+      const lineStartY = layout.pos[members[0]].y + (members.length===2 ? 44 : LAYOUT.cardH);
+      const parentMidX = members.length===2
+        ? (cardMidLeftRight(members[0]) + cardMidLeftRight(members[1]))/2
+        : cardMidLeftRight(members[0]);
+      const stubYBase = rows===1
+        ? layout.pos[members[0]].y + LAYOUT.cardH + LAYOUT.rowGap/2
+        : (layout.pos[members[0]].y + LAYOUT.cardH + layout.pos[kids[0]].y) / 2;
+      const childXs = kids.map(cid=>cardMidLeftRight(cid));
+      const minX = Math.min(...childXs, parentMidX);
+      const maxX = Math.max(...childXs, parentMidX);
+      const busColor = members.length===2
+        ? blendColors(branchColors[members[0]]||'#5b6178', branchColors[members[1]]||'#5b6178')
+        : (branchColors[members[0]] || '#5b6178');
+      busJobs.push({members, kids, lineStartY, parentMidX, stubYBase, minX, maxX, busColor});
+    });
   });
 
   // pass 2: stagger buses that share a height and overlap in X
@@ -1378,8 +1406,12 @@ function renderConnections(layout, branchColors){
   busJobs.forEach(job=>{
     // only compare against jobs at the exact same base height
     while(activeByRow.length && activeByRow[0].stubYBase !== job.stubYBase) activeByRow.shift();
-    const collider = activeByRow.find(j=>j.maxX > job.minX);
-    job.offset = collider ? collider.offset + 18 : 0;
+    // must clear the offset of EVERY overlapping job seen so far, not just
+    // the first one found -- a job that overlaps two earlier jobs sitting
+    // at two different offsets still has to sit clear of the higher one,
+    // even if that one wasn't the first match in the search.
+    const overlapping = activeByRow.filter(j=>j.maxX > job.minX);
+    job.offset = overlapping.length ? Math.max(...overlapping.map(j=>j.offset)) + 18 : 0;
     activeByRow.push({stubYBase: job.stubYBase, maxX: job.maxX, offset: job.offset});
   });
 
@@ -1403,30 +1435,6 @@ function renderConnections(layout, branchColors){
         badges.push({x:x,y:(stubY+top.y)/2, id:conn.id, label: conn.label || capitalize(conn.subtype||'biological')});
       }
     });
-  });
-
-  // ---- extra (non-canonical) parent-child connections: direct curve ----
-  // Covers two cases: a genuinely extra (non-canonical) connection on one
-  // person, and a canonical connection whose child lost the couple's
-  // hosting slot to their partner's own parent (see unitCanonicalChild) --
-  // both read the same way here: a real relationship that isn't the one
-  // holding this unit's position in the tree, so it gets a distinct curve
-  // instead of a bus line reaching wherever the couple actually ended up.
-  state.connections.filter(c=>c.type==='parent-child').forEach(c=>{
-    const canonicalUnit = layout.layoutParentUnit[c.to];
-    const hostsPosition = layout.unitCanonicalChild[layout.unitOf[c.to]] === c.to;
-    if(hostsPosition && canonicalUnit === layout.unitOf[c.from]) return; // already drawn via bus
-    const from = cardCenterBottom(c.from);
-    const to = cardCenterTop(c.to);
-    const midY = (from.y+to.y)/2;
-    const style = PC_STYLE[c.subtype||'biological'];
-    const path = svgEl('path',{
-      d:`M ${from.x} ${from.y} C ${from.x} ${midY}, ${to.x} ${midY}, ${to.x} ${to.y}`,
-      fill:'none', stroke:'#7d5fa8','stroke-width':2,
-      'stroke-dasharray': style.dash==='none'?'4,4':style.dash, opacity:.85
-    });
-    svg.appendChild(path);
-    if(editMode) badges.push({x:(from.x+to.x)/2, y:midY, id:c.id, label:(c.label||capitalize(c.subtype||'biological'))+' (extra)'});
   });
 
   // ---- partner connections: a heart badge on a short line between the two
