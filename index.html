@@ -286,6 +286,12 @@ input,select,textarea{font-family:inherit;}
 #emptyState h2{color:var(--text);font-size:20px;margin-bottom:6px;}
 #emptyState p{font-size:13px;}
 
+#gridBtn.active{background:var(--accent-soft);border-color:var(--accent);color:#fff;}
+.grid-label{
+  position:absolute;font-size:10px;color:#8fb4f0;background:rgba(11,13,19,0.75);
+  padding:2px 6px;border-radius:4px;white-space:nowrap;pointer-events:none;font-weight:600;letter-spacing:.2px;
+}
+
 .toast{
   position:fixed;top:70px;left:50%;transform:translateX(-50%);background:var(--panel2);
   border:1px solid var(--border);border-radius:10px;padding:9px 16px;font-size:12px;z-index:300;
@@ -342,6 +348,7 @@ input,select,textarea{font-family:inherit;}
     <button class="btn primary" id="addPersonBtn" onclick="openAddRootPerson()">+ Person</button>
     <button class="btn" onclick="autoArrange()" title="Auto-arrange">⤢<span id="arrangeBtnLabel"> Auto-arrange</span></button>
     <button class="btn" onclick="toggleLegend()" title="Legend">?<span id="legendBtnLabel"> Legend</span></button>
+    <button class="btn" id="gridBtn" onclick="toggleGrid()" title="Show generation grid lines">⊞<span id="gridBtnLabel"> Grid</span></button>
   </div>
 
   <div class="tb-sep"></div>
@@ -362,6 +369,7 @@ input,select,textarea{font-family:inherit;}
 <div id="mobileMenu">
   <button onclick="autoArrange();closeMobileMenu();">⤢ Auto-arrange</button>
   <button onclick="toggleLegend();closeMobileMenu();">? Legend</button>
+  <button onclick="toggleGrid();closeMobileMenu();">⊞ Grid</button>
   <div class="mm-sep"></div>
   <button onclick="exportJSON();closeMobileMenu();">⬇ Export</button>
   <button onclick="document.getElementById('importFile').click();closeMobileMenu();">⬆ Import</button>
@@ -578,6 +586,7 @@ let db = null; // the `db` capability namespace once resolved, else null (local-
 let dbStatus = 'connecting'; // 'connecting' | 'ready' | 'unavailable'
 let hasFitOnce = false;
 let editMode = false;
+let showGrid = false;
 let view = { x: 0, y: 0, scale: 1 };
 let isPanning = false, panStart = {x:0,y:0}, viewStart = {x:0,y:0};
 let openMenuPersonId = null;
@@ -1095,6 +1104,7 @@ function render(){
   const branchColors = computeBranchColors(lastLayout);
   renderCards(lastLayout, branchColors);
   renderConnections(lastLayout, branchColors);
+  renderGridLines(lastLayout);
 }
 
 /* ----- lineage color-coding: each root ancestor gets a color, descendants
@@ -1856,6 +1866,41 @@ viewport.addEventListener('touchend', e=>{
    ========================================================================= */
 function toggleLegend(){
   document.getElementById('legend').classList.toggle('open');
+}
+function toggleGrid(){
+  showGrid = !showGrid;
+  document.getElementById('gridBtn').classList.toggle('active', showGrid);
+  render();
+}
+// visualizes the generation "grid" the layout engine positions everyone on:
+// one horizontal line per distinct generation row actually in use, labeled
+// with the row's y-coordinate and how many people sit on it.
+function renderGridLines(layout){
+  document.querySelectorAll('.grid-line, .grid-label').forEach(el=>el.remove());
+  if(!showGrid || !state.people.length) return;
+  const svg = document.getElementById('connLayer');
+  const world = document.getElementById('world');
+  const rowCounts = {};
+  let minX = Infinity, maxX = -Infinity;
+  state.people.forEach(p=>{
+    const pos = layout.pos[p.id];
+    rowCounts[pos.y] = (rowCounts[pos.y]||0) + 1;
+    minX = Math.min(minX, pos.x); maxX = Math.max(maxX, pos.x+LAYOUT.cardW);
+  });
+  const x1 = minX - 60, x2 = maxX + 60;
+  Object.keys(rowCounts).map(Number).sort((a,b)=>a-b).forEach((y,i)=>{
+    const top = y - 20, bottom = y + LAYOUT.cardH + 20;
+    [top, bottom].forEach(ly=>{
+      const line = svgEl('line',{x1,y1:ly,x2,y2:ly,stroke:'#5b8fd9','stroke-width':1,'stroke-dasharray':'2,5',opacity:.35});
+      line.classList.add('grid-line');
+      svg.appendChild(line);
+    });
+    const label = document.createElement('div');
+    label.className = 'grid-label';
+    label.style.left = (x1+6)+'px'; label.style.top = top+'px';
+    label.textContent = `Row ${i+1} · y=${y} · ${rowCounts[y]} ${rowCounts[y]===1?'person':'people'}`;
+    world.appendChild(label);
+  });
 }
 function autoArrange(){
   render();
