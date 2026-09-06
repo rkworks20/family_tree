@@ -901,10 +901,29 @@ function computeLayout(){
     }
   });
 
+  // When a couple forms by marriage, each partner may independently have
+  // their own recorded parents (an in-law marriage across two branches). A
+  // person can only be positioned in one place, so the couple can only be
+  // "hosted" -- and drawn as a normal bus line -- under ONE of those two
+  // parent units. Pick whichever partner's own parent-child connection was
+  // recorded first (same "first connection wins" rule used for
+  // layoutParentUnit above); the other partner's parent link still exists
+  // in the data and is still drawn (see renderConnections), just as a
+  // separate cross-branch line rather than a bus stretching from their
+  // actual parents all the way over to wherever the couple ended up.
+  const unitCanonicalChild = {}; // unitKey -> the one member whose parent hosts this unit
+  Object.keys(unitMembers).forEach(uk=>{
+    const withParent = unitMembers[uk].filter(id=>layoutParentUnit[id]!==undefined);
+    if(!withParent.length) return;
+    withParent.sort((a,b)=>(childOrderStamp[a]??0)-(childOrderStamp[b]??0));
+    unitCanonicalChild[uk] = withParent[0];
+  });
+
   // unit -> ordered list of canonical child person ids
   const unitChildren = {};
   Object.keys(unitMembers).forEach(k=>unitChildren[k]=[]);
-  Object.keys(layoutParentUnit).forEach(childId=>{
+  Object.keys(unitCanonicalChild).forEach(uk=>{
+    const childId = unitCanonicalChild[uk];
     const pu = layoutParentUnit[childId];
     if(unitChildren[pu]) unitChildren[pu].push(childId);
   });
@@ -940,10 +959,17 @@ function computeLayout(){
   const referenced = new Set();
   Object.keys(unitMembers).forEach(k=> childUnitsOf(k).forEach(cu=>referenced.add(cu)));
   const rootUnits = Object.keys(unitMembers).filter(k=>!referenced.has(k));
-  // stable order by earliest-created member
+  // stable order by earliest-created member, unless a member's manually-set
+  // birth order says otherwise -- same override the sibling ordering above
+  // respects, so a root branch that shares a married-in descendant with
+  // another root branch can be pulled next to it deliberately.
   const personIndex = {}; people.forEach((p,i)=>personIndex[p.id]=i);
   function unitSortKey(k){ return Math.min(...unitMembers[k].map(id=>personIndex[id])); }
-  rootUnits.sort((a,b)=>unitSortKey(a)-unitSortKey(b));
+  function rootSortKey(k){
+    const orders = unitMembers[k].map(id=>byId[id]?.birthOrder).filter(v=>v!=null);
+    return orders.length ? Math.min(...orders) : 100000 + unitSortKey(k);
+  }
+  rootUnits.sort((a,b)=>rootSortKey(a)-rootSortKey(b));
 
   // A unit's own footprint accounts for whether it holds one card or two
   // side-by-side (partner) cards.
@@ -1124,7 +1150,7 @@ function computeLayout(){
     pos[p.id] = { x: s.x, y: LAYOUT.topMargin + s.gen*rowH };
   });
 
-  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, childOrdinal, branchDividers };
+  return { pos, unitOf, unitMembers, layoutParentUnit, unitChildren, unitCanonicalChild, childOrdinal, branchDividers };
 }
 
 /* =========================================================================
@@ -1220,7 +1246,11 @@ function renderCards(layout, branchColors){
 
     const age = calcAge(p.dob);
     const genderClass = 'gender-'+(p.gender||'other');
-    const ordinal = p.birthOrder != null ? p.birthOrder : layout.childOrdinal[p.id];
+    // no ordinal pill for someone with no recorded parent -- their birthOrder,
+    // if set, is only steering root-branch left-to-right order (see
+    // rootSortKey), not a sibling position, so it shouldn't read as one
+    const hasParent = layout.layoutParentUnit[p.id] !== undefined;
+    const ordinal = hasParent ? (p.birthOrder != null ? p.birthOrder : layout.childOrdinal[p.id]) : null;
 
     card.innerHTML = `
       <div class="avatar-wrap">
@@ -1376,9 +1406,16 @@ function renderConnections(layout, branchColors){
   });
 
   // ---- extra (non-canonical) parent-child connections: direct curve ----
+  // Covers two cases: a genuinely extra (non-canonical) connection on one
+  // person, and a canonical connection whose child lost the couple's
+  // hosting slot to their partner's own parent (see unitCanonicalChild) --
+  // both read the same way here: a real relationship that isn't the one
+  // holding this unit's position in the tree, so it gets a distinct curve
+  // instead of a bus line reaching wherever the couple actually ended up.
   state.connections.filter(c=>c.type==='parent-child').forEach(c=>{
     const canonicalUnit = layout.layoutParentUnit[c.to];
-    if(canonicalUnit === layout.unitOf[c.from]) return; // already drawn via bus
+    const hostsPosition = layout.unitCanonicalChild[layout.unitOf[c.to]] === c.to;
+    if(hostsPosition && canonicalUnit === layout.unitOf[c.from]) return; // already drawn via bus
     const from = cardCenterBottom(c.from);
     const to = cardCenterTop(c.to);
     const midY = (from.y+to.y)/2;
