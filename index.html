@@ -1211,6 +1211,13 @@ function renderConnections(layout, branchColors){
   });
 
   // ---- canonical parent-unit -> children bus ----
+  // Pass 1: gather each unit's bus geometry without drawing yet. Every unit
+  // at the same generation shares the exact same base bus height, so two
+  // unrelated families sitting close together can compute an identical
+  // stubY and, if their X-ranges also overlap, their buses would render as
+  // one merged line. Pass 2 below detects that and staggers the offenders
+  // a few pixels apart so they read as parallel, distinct lines.
+  const busJobs = [];
   Object.keys(layout.unitMembers).forEach(unitKey=>{
     const members = layout.unitMembers[unitKey];
     const kids = layout.unitChildren[unitKey] || [];
@@ -1225,14 +1232,30 @@ function renderConnections(layout, branchColors){
     const parentMidX = members.length===2
       ? (cardMidLeftRight(members[0]) + cardMidLeftRight(members[1]))/2
       : cardMidLeftRight(members[0]);
-    const stubY = layout.pos[members[0]].y + LAYOUT.cardH + LAYOUT.rowGap/2;
+    const stubYBase = layout.pos[members[0]].y + LAYOUT.cardH + LAYOUT.rowGap/2;
     const childXs = kids.map(cid=>cardMidLeftRight(cid));
     const minX = Math.min(...childXs, parentMidX);
     const maxX = Math.max(...childXs, parentMidX);
     const busColor = members.length===2
       ? blendColors(branchColors[members[0]]||'#5b6178', branchColors[members[1]]||'#5b6178')
       : (branchColors[members[0]] || '#5b6178');
+    busJobs.push({members, kids, lineStartY, parentMidX, stubYBase, minX, maxX, busColor});
+  });
 
+  // pass 2: stagger buses that share a height and overlap in X
+  busJobs.sort((a,b)=> a.stubYBase-b.stubYBase || a.minX-b.minX);
+  const activeByRow = []; // {stubYBase, maxX, offset} of recent jobs at this row, most recent last
+  busJobs.forEach(job=>{
+    // only compare against jobs at the exact same base height
+    while(activeByRow.length && activeByRow[0].stubYBase !== job.stubYBase) activeByRow.shift();
+    const collider = activeByRow.find(j=>j.maxX > job.minX);
+    job.offset = collider ? collider.offset + 7 : 0;
+    activeByRow.push({stubYBase: job.stubYBase, maxX: job.maxX, offset: job.offset});
+  });
+
+  busJobs.forEach(job=>{
+    const {members, kids, lineStartY, parentMidX, minX, maxX, busColor} = job;
+    const stubY = job.stubYBase + job.offset;
     // vertical from parent down to bus
     svg.appendChild(svgEl('line',{x1:parentMidX,y1:lineStartY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2}));
     // horizontal bus
