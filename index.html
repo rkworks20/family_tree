@@ -941,20 +941,20 @@ function computeLayout(){
 
   const rowH = LAYOUT.cardH + LAYOUT.rowGap;
   const posPx = {}; // personId -> {x, gen}  (x = card left-edge, in px)
-  function placeUnit(k, leftX){
+  function placeUnit(k, leftX, rowOffset){
     const w = unitWidth(k);
     const cus = childUnitsOf(k);
     if(cus.length){
       const childrenTotal = cus.reduce((s,cu)=>s+unitWidth(cu),0) + SIBLING_GAP*(cus.length-1);
       let childX = leftX + (w - childrenTotal)/2; // center children under this unit's footprint
       cus.forEach(cu=>{
-        placeUnit(cu, childX);
+        placeUnit(cu, childX, rowOffset);
         childX += unitWidth(cu) + SIBLING_GAP;
       });
     }
     const centerX = leftX + w/2;
     const members = unitMembers[k];
-    const g = Math.max(...members.map(id=>gen[id]));
+    const g = Math.max(...members.map(id=>gen[id])) + rowOffset;
     if(members.length === 2){
       posPx[members[0]] = {x: centerX - LAYOUT.cardW, gen: g};
       posPx[members[1]] = {x: centerX, gen: g};
@@ -962,10 +962,34 @@ function computeLayout(){
       posPx[members[0]] = {x: centerX - LAYOUT.cardW/2, gen: g};
     }
   }
-  let cursor = LAYOUT.leftMargin;
+
+  // how many generation-rows deep a unit's subtree reaches (0-based), used
+  // to pack disconnected branches into a grid instead of one endless row
+  const unitMaxGenCache = {};
+  function unitMaxGen(k){
+    if(unitMaxGenCache[k] !== undefined) return unitMaxGenCache[k];
+    let maxG = Math.max(...unitMembers[k].map(id=>gen[id]));
+    childUnitsOf(k).forEach(cu=>{ maxG = Math.max(maxG, unitMaxGen(cu)); });
+    unitMaxGenCache[k] = maxG;
+    return maxG;
+  }
+
+  // separate (unconnected) family branches wrap onto a new super-row once a
+  // row gets too wide, instead of sprawling into one mile-long horizontal
+  // strip with huge dead space wherever a tall-and-narrow branch sits next
+  // to a short-and-wide one
+  const MAX_ROW_WIDTH = 2600;
+  let rowX = LAYOUT.leftMargin, rowOffsetGen = 0, rowMaxGen = 0;
   rootUnits.forEach(k=>{
-    placeUnit(k, cursor);
-    cursor += unitWidth(k) + SIBLING_GAP;
+    const w = unitWidth(k);
+    if(rowX > LAYOUT.leftMargin && rowX + w > MAX_ROW_WIDTH){
+      rowOffsetGen += rowMaxGen + 2; // previous super-row's height + a blank row of breathing room
+      rowMaxGen = 0;
+      rowX = LAYOUT.leftMargin;
+    }
+    placeUnit(k, rowX, rowOffsetGen);
+    rowMaxGen = Math.max(rowMaxGen, unitMaxGen(k));
+    rowX += w + SIBLING_GAP;
   });
 
   // any person somehow not placed (shouldn't normally happen) -> append
