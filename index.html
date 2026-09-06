@@ -150,7 +150,7 @@ input,select,textarea{font-family:inherit;}
 .card .age{font-size:10.5px;color:var(--branch-color,var(--muted));font-weight:600;margin-top:1px;opacity:.8;}
 .card .age.unknown{color:var(--muted);font-weight:400;opacity:1;}
 .card .mini-pill{
-  position:absolute;top:-2px;pointer-events:none;
+  position:absolute;top:-14px;pointer-events:none;
   background:var(--panel);border:1px solid var(--border-soft);border-radius:20px;
   font-size:9px;font-weight:700;letter-spacing:.4px;color:var(--muted);padding:2px 7px;white-space:nowrap;
 }
@@ -1182,7 +1182,7 @@ function heartIconSVG(color, outline){
 function renderConnections(layout, branchColors){
   const svg = document.getElementById('connLayer');
   svg.innerHTML = '';
-  const cardCenterTop = id => ({x: layout.pos[id].x + LAYOUT.cardW/2, y: layout.pos[id].y});
+  const cardCenterTop = id => ({x: layout.pos[id].x + LAYOUT.cardW/2, y: layout.pos[id].y + 4}); // avatar's actual top edge, not the empty card-slot top
   const cardCenterBottom = id => ({x: layout.pos[id].x + LAYOUT.cardW/2, y: layout.pos[id].y + LAYOUT.cardH});
   const cardMidLeftRight = id => layout.pos[id].x + LAYOUT.cardW/2;
 
