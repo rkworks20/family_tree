@@ -588,7 +588,7 @@ let editingPersonId = null;
 let pendingPhotoDataUrl = null;
 let connModalCtx = null; // connection id
 
-const LAYOUT = { cardW:172, cardH:168, colGap:46, rowGap:150, topMargin:60, leftMargin:80 };
+const LAYOUT = { cardW:172, cardH:150, colGap:46, rowGap:105, topMargin:60, leftMargin:80 };
 
 /* =========================================================================
    CLOUD PERSISTENCE
@@ -940,18 +940,30 @@ function computeLayout(){
   // for whether it holds one card or two side-by-side (partner) cards --
   // using a fixed "1 slot per unit" regardless of member count was the bug
   // that made couples overlap their neighbors.
-  const SIBLING_GAP = LAYOUT.colGap;
+  const SIBLING_GAP = LAYOUT.colGap; // used whenever either neighbor has a partner/children of their own
+  const SIBLING_GAP_TIGHT = 26; // two plain, childless/partnerless siblings sit closer together
   function unitSelfWidth(k){
     return unitMembers[k].length === 2 ? (LAYOUT.cardW*2) : LAYOUT.cardW; // partner cards touch directly, no gap
+  }
+  // a unit "has its own family tree" once it has a partner or any children --
+  // only then does it get the wider default gap from its neighbor; two bare
+  // siblings with neither stay at the tighter default.
+  function unitHasFamily(k){
+    return unitMembers[k].length === 2 || childUnitsOf(k).length > 0;
+  }
+  function gapBetween(cuA, cuB){
+    return (unitHasFamily(cuA) || unitHasFamily(cuB)) ? SIBLING_GAP : SIBLING_GAP_TIGHT;
+  }
+  function childrenTotalWidth(cus){
+    let total = cus.reduce((s,cu)=>s+unitWidth(cu),0);
+    for(let i=0;i<cus.length-1;i++) total += gapBetween(cus[i],cus[i+1]);
+    return total;
   }
   const widthCache = {};
   function unitWidth(k){
     if(widthCache[k] !== undefined) return widthCache[k];
     const cus = childUnitsOf(k);
-    let childrenWidth = 0;
-    if(cus.length){
-      childrenWidth = cus.reduce((s,cu)=>s+unitWidth(cu),0) + SIBLING_GAP*(cus.length-1);
-    }
+    const childrenWidth = cus.length ? childrenTotalWidth(cus) : 0;
     widthCache[k] = Math.max(childrenWidth, unitSelfWidth(k));
     return widthCache[k];
   }
@@ -962,11 +974,12 @@ function computeLayout(){
     const w = unitWidth(k);
     const cus = childUnitsOf(k);
     if(cus.length){
-      const childrenTotal = cus.reduce((s,cu)=>s+unitWidth(cu),0) + SIBLING_GAP*(cus.length-1);
+      const childrenTotal = childrenTotalWidth(cus);
       let childX = leftX + (w - childrenTotal)/2; // center children under this unit's footprint
-      cus.forEach(cu=>{
+      cus.forEach((cu,i)=>{
         placeUnit(cu, childX, rowOffset);
-        childX += unitWidth(cu) + SIBLING_GAP;
+        childX += unitWidth(cu);
+        if(i < cus.length-1) childX += gapBetween(cu, cus[i+1]);
       });
     }
     const centerX = leftX + w/2;
