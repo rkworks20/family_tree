@@ -1318,7 +1318,6 @@ function renderConnections(layout, branchColors){
       (byRowGap[rows] = byRowGap[rows] || []).push(cid);
     });
     Object.keys(byRowGap).forEach(rowsStr=>{
-      const rows = Number(rowsStr);
       const kids = byRowGap[rowsStr];
       // for a couple, the vertical line down to the kids STARTS at the heart's
       // height (44px, avatar-center) -- that X position sits in the gap
@@ -1330,9 +1329,16 @@ function renderConnections(layout, branchColors){
       const parentMidX = members.length===2
         ? (cardMidLeftRight(members[0]) + cardMidLeftRight(members[1]))/2
         : cardMidLeftRight(members[0]);
-      const stubYBase = rows===1
-        ? layout.pos[members[0]].y + LAYOUT.cardH + LAYOUT.rowGap/2
-        : (layout.pos[members[0]].y + LAYOUT.cardH + layout.pos[kids[0]].y) / 2;
+      // Always the gap immediately ABOVE the kids' own row, never a
+      // midpoint between the parent's row and theirs -- a midpoint is only
+      // safe when they're one row apart. Once a connection skips a row (an
+      // "extra" link straight to a grandchild), a midpoint can land the
+      // whole horizontal bus right on top of an intermediate row's cards,
+      // slicing straight through avatars that have nothing to do with this
+      // connection. Anchoring to the kids' row keeps the bus in the same
+      // gap every ordinary same-row bus already uses, which is already
+      // proven clear of that row's own cards.
+      const stubYBase = layout.pos[kids[0]].y - LAYOUT.rowGap/2;
       const childXs = kids.map(cid=>cardMidLeftRight(cid));
       const minX = Math.min(...childXs, parentMidX);
       const maxX = Math.max(...childXs, parentMidX);
