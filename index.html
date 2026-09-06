@@ -1202,16 +1202,17 @@ function renderConnections(layout, branchColors){
     const members = layout.unitMembers[unitKey];
     const kids = layout.unitChildren[unitKey] || [];
     if(kids.length === 0) return;
-    // for a couple, start the line down to the kids right at the heart's
+    // for a couple, the vertical line down to the kids STARTS at the heart's
     // height (44px, avatar-center) -- that X position sits in the gap
-    // between the two avatars, clear of either one's name/DOB text. A solo
-    // parent has no such gap (the line's X is their own text column), so it
-    // still drops from below their card content, same as before.
-    const parentBottomY = layout.pos[members[0]].y + (members.length===2 ? 44 : LAYOUT.cardH);
+    // between the two avatars, clear of either one's name/DOB text, all the
+    // way down. The horizontal bus itself, though, always sits below BOTH
+    // parents' full name/DOB text (LAYOUT.cardH), same as a solo parent --
+    // starting the line higher must not also drag the bus up into that text.
+    const lineStartY = layout.pos[members[0]].y + (members.length===2 ? 44 : LAYOUT.cardH);
     const parentMidX = members.length===2
       ? (cardMidLeftRight(members[0]) + cardMidLeftRight(members[1]))/2
       : cardMidLeftRight(members[0]);
-    const stubY = parentBottomY + LAYOUT.rowGap/2;
+    const stubY = layout.pos[members[0]].y + LAYOUT.cardH + LAYOUT.rowGap/2;
     const childXs = kids.map(cid=>cardMidLeftRight(cid));
     const minX = Math.min(...childXs, parentMidX);
     const maxX = Math.max(...childXs, parentMidX);
@@ -1220,7 +1221,7 @@ function renderConnections(layout, branchColors){
       : (branchColors[members[0]] || '#5b6178');
 
     // vertical from parent down to bus
-    svg.appendChild(svgEl('line',{x1:parentMidX,y1:parentBottomY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2}));
+    svg.appendChild(svgEl('line',{x1:parentMidX,y1:lineStartY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2}));
     // horizontal bus
     if(maxX>minX){
       svg.appendChild(svgEl('line',{x1:minX,y1:stubY,x2:maxX,y2:stubY,stroke:busColor,'stroke-width':2}));
