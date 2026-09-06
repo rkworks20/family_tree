@@ -136,6 +136,7 @@ input,select,textarea{font-family:inherit;}
   display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;
   border:2px solid var(--panel);color:#fff;
 }
+.card .gbadge svg{width:62%;height:62%;overflow:visible;}
 .card .gbadge.gender-male{background:var(--male);}
 .card .gbadge.gender-female{background:var(--female);}
 .card .gbadge.gender-other{background:var(--other);}
@@ -968,8 +969,16 @@ function svgEl(tag, attrs){
 }
 
 function genderGlyph(g){
-  if(g==='male') return '♂';
-  if(g==='female') return '♀';
+  // hand-drawn SVGs, not the Unicode ♂/♀ characters -- fonts render those
+  // two glyphs at different optical centers (♂'s arrow visibly pulls it
+  // off-center in most mobile fonts), so a shared flex-center never lines
+  // both up consistently. A fixed viewBox does.
+  if(g==='male'){
+    return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="9" cy="15" r="6" fill="none" stroke="#fff" stroke-width="2"/><line x1="13.4" y1="10.6" x2="19" y2="5" stroke="#fff" stroke-width="2" stroke-linecap="round"/><polyline points="13,5 19,5 19,11" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+  if(g==='female'){
+    return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="9" r="6" fill="none" stroke="#fff" stroke-width="2"/><line x1="12" y1="15" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="8.5" y1="18" x2="15.5" y2="18" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
   return '⚧';
 }
 
