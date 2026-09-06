@@ -38,7 +38,9 @@ input,select,textarea{font-family:inherit;}
   border-bottom:1px solid var(--border);
   display:flex;align-items:center;gap:10px;padding:0 14px;
   backdrop-filter:blur(6px);
+  overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;
 }
+#topbar::-webkit-scrollbar{display:none;}
 #topbar .title{font-weight:700;font-size:15px;letter-spacing:.3px;margin-right:8px;white-space:nowrap;}
 #topbar .title .dot{color:var(--accent);}
 .tb-group{display:flex;align-items:center;gap:6px;padding:4px;background:var(--panel2);border:1px solid var(--border-soft);border-radius:10px;}
@@ -81,6 +83,7 @@ input,select,textarea{font-family:inherit;}
   background-color:var(--bg);
   background-image:radial-gradient(var(--bg-dot) 1.4px, transparent 1.4px);
   background-size:26px 26px;
+  touch-action:none; /* we drive pan/pinch-zoom ourselves; stop the browser's own gestures fighting it */
 }
 #viewport.panning{cursor:grabbing;}
 #world{position:absolute;top:0;left:0;transform-origin:0 0;}
@@ -244,6 +247,37 @@ input,select,textarea{font-family:inherit;}
   box-shadow:var(--shadow);opacity:0;transition:opacity .25s;pointer-events:none;
 }
 .toast.show{opacity:1;}
+
+/* ---------- Mobile ---------- */
+@media (max-width:640px){
+  #topbar{padding:0 10px;gap:7px;}
+  #topbar .title{font-size:13px;margin-right:2px;}
+  .btn{padding:8px 10px;font-size:12px;}
+  .tb-group{padding:3px;gap:4px;}
+  .tb-sep{margin:0 1px;}
+  #editToggle{padding:6px 9px;font-size:12px;}
+  #editToggle .sw{width:30px;height:17px;}
+  #editToggle .sw::after{width:13px;height:13px;}
+  #editToggle.on .sw::after{left:15px;}
+  /* keep the toolbar's essentials reachable without a scroll; low-priority
+     labels collapse to their icon (still has a title="" tooltip) */
+  #saveState{display:none;}
+  #legendBtnLabel, #arrangeBtnLabel{display:none;}
+
+  .card .mini{width:30px;height:30px;font-size:14px;}
+  .card .addmenu button{padding:10px 12px;font-size:13px;}
+  .card .gbadge{width:22px;height:22px;}
+
+  /* 16px+ stops iOS Safari auto-zooming the page on focus */
+  .field input, .field select, .field textarea, .seg span{font-size:16px;}
+  .modal{padding:16px;}
+
+  #zoomCtrl{right:10px;bottom:10px;}
+  #legend{left:10px;bottom:10px;max-width:180px;font-size:10px;}
+
+  #emptyState{padding:0 24px;}
+  #emptyState h2{font-size:17px;}
+}
 </style>
 </head>
 <body>
@@ -259,8 +293,8 @@ input,select,textarea{font-family:inherit;}
 
   <div class="tb-group">
     <button class="btn primary" id="addPersonBtn" onclick="openAddRootPerson()">+ Person</button>
-    <button class="btn" onclick="autoArrange()">⤢ Auto-arrange</button>
-    <button class="btn" onclick="toggleLegend()">? Legend</button>
+    <button class="btn" onclick="autoArrange()" title="Auto-arrange">⤢<span id="arrangeBtnLabel"> Auto-arrange</span></button>
+    <button class="btn" onclick="toggleLegend()" title="Legend">?<span id="legendBtnLabel"> Legend</span></button>
   </div>
 
   <div class="tb-sep"></div>
@@ -1429,22 +1463,48 @@ viewport.addEventListener('wheel', e=>{
   zoomBy(factor, e.clientX, e.clientY);
 }, {passive:false});
 
-// touch pan (single finger)
+// touch pan (single finger) + pinch-to-zoom (two fingers)
 let touchStart=null;
+let pinchPrevDist=null;
+const touchDist = (t0,t1) => Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY);
+const touchMid = (t0,t1) => ({x:(t0.clientX+t1.clientX)/2, y:(t0.clientY+t1.clientY)/2});
+
+let touchMoved = false; // guards against a jittery tap being swallowed as a micro-pan
 viewport.addEventListener('touchstart', e=>{
-  if(e.touches.length===1 && !e.target.closest('.card')){
+  if(e.touches.length===2){
+    touchStart = null;
+    pinchPrevDist = touchDist(e.touches[0], e.touches[1]);
+  } else if(e.touches.length===1 && !e.target.closest('.card') && !e.target.closest('.conn-badge')){
+    pinchPrevDist = null;
+    touchMoved = false;
     touchStart = {x:e.touches[0].clientX, y:e.touches[0].clientY};
     viewStart = {x:view.x, y:view.y};
   }
 }, {passive:true});
 viewport.addEventListener('touchmove', e=>{
-  if(touchStart && e.touches.length===1){
-    view.x = viewStart.x + (e.touches[0].clientX - touchStart.x);
-    view.y = viewStart.y + (e.touches[0].clientY - touchStart.y);
-    applyTransform();
+  if(pinchPrevDist && e.touches.length===2){
+    e.preventDefault();
+    const [t0,t1] = e.touches;
+    const newDist = touchDist(t0,t1);
+    const mid = touchMid(t0,t1);
+    zoomBy(newDist/pinchPrevDist, mid.x, mid.y);
+    pinchPrevDist = newDist;
+  } else if(touchStart && e.touches.length===1){
+    const dx = e.touches[0].clientX - touchStart.x;
+    const dy = e.touches[0].clientY - touchStart.y;
+    if(touchMoved || Math.abs(dx) > 4 || Math.abs(dy) > 4){
+      touchMoved = true;
+      e.preventDefault();
+      view.x = viewStart.x + dx;
+      view.y = viewStart.y + dy;
+      applyTransform();
+    }
   }
-}, {passive:true});
-viewport.addEventListener('touchend', ()=>{ touchStart=null; });
+}, {passive:false});
+viewport.addEventListener('touchend', e=>{
+  if(e.touches.length < 2) pinchPrevDist = null;
+  if(e.touches.length < 1) touchStart = null;
+});
 
 /* =========================================================================
    MISC UI
