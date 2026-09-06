@@ -1202,7 +1202,12 @@ function renderConnections(layout, branchColors){
     const members = layout.unitMembers[unitKey];
     const kids = layout.unitChildren[unitKey] || [];
     if(kids.length === 0) return;
-    const parentBottomY = Math.max(...members.map(id=>layout.pos[id].y + LAYOUT.cardH));
+    // for a couple, start the line down to the kids right at the heart's
+    // height (44px, avatar-center) -- that X position sits in the gap
+    // between the two avatars, clear of either one's name/DOB text. A solo
+    // parent has no such gap (the line's X is their own text column), so it
+    // still drops from below their card content, same as before.
+    const parentBottomY = layout.pos[members[0]].y + (members.length===2 ? 44 : LAYOUT.cardH);
     const parentMidX = members.length===2
       ? (cardMidLeftRight(members[0]) + cardMidLeftRight(members[1]))/2
       : cardMidLeftRight(members[0]);
