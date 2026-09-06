@@ -902,20 +902,33 @@ function computeLayout(){
   });
 
   // When a couple forms by marriage, each partner may independently have
-  // their own recorded parents (an in-law marriage across two branches). A
-  // person can only be positioned in one place, so the couple can only be
-  // "hosted" -- and drawn as a normal bus line -- under ONE of those two
-  // parent units. Pick whichever partner's own parent-child connection was
-  // recorded first (same "first connection wins" rule used for
-  // layoutParentUnit above); the other partner's parent link still exists
-  // in the data and is still drawn (see renderConnections), just as a
-  // separate cross-branch line rather than a bus stretching from their
-  // actual parents all the way over to wherever the couple ended up.
+  // their own recorded parents (an in-law marriage across two branches, or
+  // even a generation-skipping marriage within the same extended family --
+  // someone marrying a cousin from a deeper-descended line, e.g. their own
+  // great-nephew). A person can only be positioned in one place, so the
+  // couple can only be "hosted" -- and drawn as a normal bus line -- under
+  // ONE of those two parent units. Prefer whichever partner's own recorded
+  // parent sits at the deeper final row (bloodDepth below): hosting there
+  // needs no generation pull-down at all, since that partner's own family
+  // already naturally reaches this depth. Hosting under the shallower
+  // partner instead would position the couple via sibling packing meant
+  // for a shallower row -- coordinates reserved among siblings who never
+  // actually render next to them, since gen-sync (see the relaxation loop
+  // above) pulls the couple down to the deeper partner's row regardless of
+  // who hosts. Only when both partners' parents sit at the same depth does
+  // this fall back to "whichever connection was recorded first," same as
+  // before.
+  function bloodDepth(id){
+    const pu = layoutParentUnit[id];
+    return pu === undefined ? 0 : gen[unitMembers[pu][0]] + 1;
+  }
   const unitCanonicalChild = {}; // unitKey -> the one member whose parent hosts this unit
   Object.keys(unitMembers).forEach(uk=>{
     const withParent = unitMembers[uk].filter(id=>layoutParentUnit[id]!==undefined);
     if(!withParent.length) return;
-    withParent.sort((a,b)=>(childOrderStamp[a]??0)-(childOrderStamp[b]??0));
+    withParent.sort((a,b)=>
+      (bloodDepth(b)-bloodDepth(a)) || ((childOrderStamp[a]??0)-(childOrderStamp[b]??0))
+    );
     unitCanonicalChild[uk] = withParent[0];
   });
 
