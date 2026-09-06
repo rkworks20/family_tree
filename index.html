@@ -973,40 +973,33 @@ function computeLayout(){
     return maxG;
   }
 
-  // ---- tidy-tree layout (contour-based) ----
+  // ---- tidy-tree layout (row-based) ----
   // A naive "reserve a rectangular column sized to this subtree's widest
   // generation, center every other generation inside it" layout leaves a lot
   // of dead space around any generation narrower than its subtree's widest
-  // one. Instead, each unit's subtree carries a CONTOUR -- its left/right
-  // extent at every relative depth below it -- and siblings are pushed
-  // apart only as far as some depth actually requires, so a narrow
-  // generation can tuck in close to its neighbor even while a deeper
-  // generation in the same subtree is much wider.
+  // one. Comparing whole subtrees against each other generation-by-generation
+  // (a classic contour) fixes that only partially: a unit sitting right next
+  // to a sibling with a deep, wide family still gets pushed out by that
+  // sibling's full depth, even at rows where nothing of its own reaches that
+  // far. So siblings here are placed using only their OWN row (each unit's
+  // own card), keeping placement cheap and tight; the global per-row repair
+  // pass below is what actually guarantees no two cards ever collide, by
+  // checking real placed positions row by row rather than reserving space
+  // for a whole subtree's worst case up front.
   function packSiblings(cus, gapFn, getLayout){
     const placements = [];
-    let combined = null;
+    let prevRight = null; // right edge of the previous sibling's own row, in this group's local coords
     cus.forEach((cu,i)=>{
       const lay = getLayout(cu);
       let shift = 0;
-      if(i===0){
-        combined = lay.contour.map(c=>({left:c.left, right:c.right}));
-      } else {
+      if(i>0){
         const gap = gapFn(cus[i-1], cu);
-        let found = false;
-        const maxDepth = Math.min(combined.length, lay.contour.length);
-        for(let d=0; d<maxDepth; d++){
-          const needed = combined[d].right + gap - lay.contour[d].left;
-          if(!found || needed > shift){ shift = needed; found = true; }
-        }
-        for(let d=0; d<lay.contour.length; d++){
-          const L = lay.contour[d].left + shift, R = lay.contour[d].right + shift;
-          if(combined[d]) combined[d] = { left: Math.min(combined[d].left, L), right: Math.max(combined[d].right, R) };
-          else combined[d] = { left: L, right: R };
-        }
+        shift = (prevRight + gap) - lay.ownLeft;
       }
       placements.push({ cu, offsetX: shift, layout: lay });
+      prevRight = lay.ownRight + shift;
     });
-    return { placements, combined: combined || [] };
+    return { placements };
   }
 
   const layoutCache = {};
@@ -1016,13 +1009,12 @@ function computeLayout(){
     const selfW = unitSelfWidth(k);
     let result;
     if(cus.length === 0){
-      result = { rootX: selfW/2, contour: [{left:0, right:selfW}], children: [] };
+      result = { rootX: selfW/2, ownLeft: 0, ownRight: selfW, children: [] };
     } else {
-      const { placements, combined } = packSiblings(cus, gapBetween, layoutSubtree);
+      const { placements } = packSiblings(cus, gapBetween, layoutSubtree);
       const first = placements[0], last = placements[placements.length-1];
       const rootX = ((first.offsetX+first.layout.rootX) + (last.offsetX+last.layout.rootX)) / 2;
-      const contour = [{ left: rootX - selfW/2, right: rootX + selfW/2 }, ...combined];
-      result = { rootX, contour, children: placements };
+      result = { rootX, ownLeft: rootX - selfW/2, ownRight: rootX + selfW/2, children: placements };
     }
     layoutCache[k] = result;
     return result;
@@ -1052,16 +1044,65 @@ function computeLayout(){
     layoutInfo.children.forEach(child=>assignAbsolute(child.cu, child.layout, originX + child.offsetX));
   }
 
-  const branchDividers = {vertical:[], horizontal:[]};
   let rowMaxGen = 0;
-  const rootEdges = [];
   rootPlacements.forEach(rp=>{
     const originX = LAYOUT.leftMargin + rp.offsetX;
     assignAbsolute(rp.cu, rp.layout, originX);
     rowMaxGen = Math.max(rowMaxGen, unitMaxGen(rp.cu));
+  });
+
+  // ---- global per-row collision repair ----
+  // packSiblings above only compares each sibling against its immediate
+  // neighbor (see note there), which is intentionally optimistic -- it can
+  // under-shift when a non-adjacent, deeper generation would actually
+  // collide. This pass is the safety net: walk generations top to bottom,
+  // and within each row push any unit that's still too close to its
+  // left neighbor (checking real placed positions, not envelopes) further
+  // right, carrying its whole subtree with it. Because shallower rows are
+  // fully resolved before a deeper row is touched, and a push only ever
+  // moves a unit's own descendants (never its ancestors or anything to its
+  // left), a single top-to-bottom sweep is sufficient -- it can't undo a
+  // fix already made, and it never needs to run twice.
+  const unitParent = {};
+  Object.keys(unitMembers).forEach(pu=>{ childUnitsOf(pu).forEach(cu=>{ unitParent[cu] = pu; }); });
+  const descendantUnitsCache = {};
+  function descendantUnitsOf(k){
+    if(descendantUnitsCache[k]) return descendantUnitsCache[k];
+    let list = [k];
+    childUnitsOf(k).forEach(cu=>{ list = list.concat(descendantUnitsOf(cu)); });
+    descendantUnitsCache[k] = list;
+    return list;
+  }
+  function shiftUnit(k, delta){
+    descendantUnitsOf(k).forEach(uk=>{
+      unitMembers[uk].forEach(pid=>{ posPx[pid].x += delta; });
+    });
+  }
+  const unitsByRow = {};
+  Object.keys(unitMembers).forEach(k=>{
+    const g = posPx[unitMembers[k][0]].gen;
+    (unitsByRow[g] = unitsByRow[g] || []).push(k);
+  });
+  Object.keys(unitsByRow).map(Number).sort((a,b)=>a-b).forEach(g=>{
+    const rowUnits = unitsByRow[g].sort((a,b)=> posPx[unitMembers[a][0]].x - posPx[unitMembers[b][0]].x);
+    for(let i=1;i<rowUnits.length;i++){
+      const prevU = rowUnits[i-1], curU = rowUnits[i];
+      const prevRight = posPx[unitMembers[prevU][0]].x + unitSelfWidth(prevU);
+      const curLeft = posPx[unitMembers[curU][0]].x;
+      const sameParent = unitParent[prevU] !== undefined && unitParent[prevU] === unitParent[curU];
+      const minGap = sameParent ? gapBetween(prevU, curU) : BRANCH_GAP;
+      const deficit = (prevRight + minGap) - curLeft;
+      if(deficit > 0) shiftUnit(curU, deficit);
+    }
+  });
+
+  const branchDividers = {vertical:[], horizontal:[]};
+  const rootEdges = [];
+  rootPlacements.forEach(rp=>{
+    const peopleInSubtree = descendantUnitsOf(rp.cu).flatMap(uk=>unitMembers[uk]);
     rootEdges.push({
-      left: originX + Math.min(...rp.layout.contour.map(c=>c.left)),
-      right: originX + Math.max(...rp.layout.contour.map(c=>c.right)),
+      left: Math.min(...peopleInSubtree.map(pid=>posPx[pid].x)),
+      right: Math.max(...peopleInSubtree.map(pid=>posPx[pid].x + LAYOUT.cardW)),
     });
   });
   const dividerTop = LAYOUT.topMargin - 20;
