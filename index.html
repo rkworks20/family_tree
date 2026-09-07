@@ -320,6 +320,21 @@ input,select,textarea{font-family:inherit;}
 }
 .stats-row:last-child{border-bottom:none;}
 .stats-row .v{color:var(--text);font-weight:700;font-size:14px;}
+.stats-section{border-bottom:1px solid var(--border-soft);}
+.stats-section:last-child{border-bottom:none;}
+.stats-section .stats-row{border-bottom:none;}
+.stats-list{padding:0 0 8px;}
+.stats-list-item{
+  display:flex;gap:6px;font-size:12px;color:var(--text);padding:5px 6px;border-radius:7px;
+  cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.stats-list-item:hover{background:var(--accent-soft);}
+.stats-list-item .n{color:var(--muted);flex-shrink:0;}
+.stats-empty{font-size:11.5px;color:var(--muted);font-style:italic;padding:2px 6px 8px;}
+.stats-subgroup-label{
+  font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;
+  padding:6px 6px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
 .card.selected .avatar{outline:3px solid var(--accent);outline-offset:3px;}
 
 /* ---------- Empty state ---------- */
@@ -473,9 +488,18 @@ input,select,textarea{font-family:inherit;}
         <div class="stats-person-name" id="statsPersonName"></div>
         <button id="statsClearBtn" title="Clear selection" onclick="event.stopPropagation();clearSelection()">✕</button>
       </div>
-      <div class="stats-row"><span>Siblings</span><span class="v" id="statsSiblings">0</span></div>
-      <div class="stats-row"><span>Children</span><span class="v" id="statsChildren">0</span></div>
-      <div class="stats-row"><span>Grandchildren</span><span class="v" id="statsGrandchildren">0</span></div>
+      <div class="stats-section">
+        <div class="stats-row"><span>Siblings</span><span class="v" id="statsSiblings">0</span></div>
+        <div class="stats-list" id="statsSiblingsList"></div>
+      </div>
+      <div class="stats-section">
+        <div class="stats-row"><span>Children</span><span class="v" id="statsChildren">0</span></div>
+        <div class="stats-list" id="statsChildrenList"></div>
+      </div>
+      <div class="stats-section">
+        <div class="stats-row"><span>Grandchildren</span><span class="v" id="statsGrandchildren">0</span></div>
+        <div class="stats-list" id="statsGrandchildrenList"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1325,13 +1349,47 @@ function toggleStatsPanel(){
   statsPanelCollapsed = !statsPanelCollapsed;
   applyStatsPanelState();
 }
+// birth order if set, else the order they were added -- the same fallback
+// rule the layout engine uses for sibling order (see siblingOrderKey in
+// computeLayout), reimplemented standalone here since that one is scoped
+// inside the layout function and tied to canonical-parent-only grouping.
+function personSortKey(id){
+  const idx = state.people.findIndex(p=>p.id===id);
+  const p = state.people[idx];
+  return (p && p.birthOrder != null) ? p.birthOrder : 100000 + idx;
+}
+function sortedPeople(ids){
+  return ids.map(id=>state.people.find(p=>p.id===id)).filter(Boolean)
+    .sort((a,b)=>personSortKey(a.id)-personSortKey(b.id));
+}
 function computeRelationshipStats(id){
-  const siblingSet = new Set();
-  parentsOf(id).forEach(pid=>{ childrenOf(pid).forEach(sid=>{ if(sid!==id) siblingSet.add(sid); }); });
-  const kids = childrenOf(id);
-  const grandkidSet = new Set();
-  kids.forEach(kid=>{ childrenOf(kid).forEach(gid=>grandkidSet.add(gid)); });
-  return { siblings: siblingSet.size, children: kids.length, grandchildren: grandkidSet.size };
+  const siblingIds = new Set();
+  parentsOf(id).forEach(pid=>{ childrenOf(pid).forEach(sid=>{ if(sid!==id) siblingIds.add(sid); }); });
+  const children = sortedPeople(childrenOf(id));
+  // grandchildren, grouped by which child they descend from (children in
+  // their own birth order), and by their own birth order within that --
+  // a flat list mixing several children's kids together would lose the
+  // "in order" structure the moment more than one child has kids of
+  // their own, so this keeps each child's line visually together.
+  const grandchildrenByChild = children
+    .map(child=>({ child, grandkids: sortedPeople(childrenOf(child.id)) }))
+    .filter(g=>g.grandkids.length>0);
+  const grandTotal = grandchildrenByChild.reduce((sum,g)=>sum+g.grandkids.length, 0);
+  return { siblings: sortedPeople([...siblingIds]), children, grandchildrenByChild, grandTotal };
+}
+function renderPersonList(people){
+  if(!people.length) return `<div class="stats-empty">None</div>`;
+  return people.map((p,i)=>
+    `<div class="stats-list-item" onclick="event.stopPropagation();selectPerson('${p.id}')">`+
+    `<span class="n">${i+1}.</span><span>${escapeHtml(p.name || 'Unnamed')}</span></div>`
+  ).join('');
+}
+function renderGrandchildrenList(groups){
+  if(!groups.length) return `<div class="stats-empty">None</div>`;
+  return groups.map(g=>
+    `<div class="stats-subgroup-label">via ${escapeHtml(g.child.name || 'Unnamed')}</div>`+
+    renderPersonList(g.grandkids)
+  ).join('');
 }
 function updateStatsPanel(){
   document.getElementById('statsTotalNum').textContent = state.people.length;
@@ -1340,9 +1398,12 @@ function updateStatsPanel(){
   if(!p){ section.classList.remove('show'); return; }
   const stats = computeRelationshipStats(p.id);
   document.getElementById('statsPersonName').textContent = p.name || 'Unnamed';
-  document.getElementById('statsSiblings').textContent = stats.siblings;
-  document.getElementById('statsChildren').textContent = stats.children;
-  document.getElementById('statsGrandchildren').textContent = stats.grandchildren;
+  document.getElementById('statsSiblings').textContent = stats.siblings.length;
+  document.getElementById('statsSiblingsList').innerHTML = renderPersonList(stats.siblings);
+  document.getElementById('statsChildren').textContent = stats.children.length;
+  document.getElementById('statsChildrenList').innerHTML = renderPersonList(stats.children);
+  document.getElementById('statsGrandchildren').textContent = stats.grandTotal;
+  document.getElementById('statsGrandchildrenList').innerHTML = renderGrandchildrenList(stats.grandchildrenByChild);
   section.classList.add('show');
   if(statsPanelCollapsed){ statsPanelCollapsed=false; applyStatsPanelState(); }
 }
