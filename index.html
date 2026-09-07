@@ -278,6 +278,50 @@ input,select,textarea{font-family:inherit;}
 #legend .swatch.dash{border-top-style:dashed;}
 #legend .swatch.dot{border-top-style:dotted;}
 
+/* ---------- Stats panel ---------- */
+#statsPanel{
+  position:fixed;top:66px;right:16px;bottom:16px;z-index:40;width:230px;
+  background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;
+  transition:width .18s ease;
+}
+#statsPanel.collapsed{width:42px;}
+#statsPanel .stats-head{
+  display:flex;align-items:center;justify-content:space-between;gap:6px;
+  padding:11px 12px;border-bottom:1px solid var(--border-soft);flex-shrink:0;cursor:pointer;
+}
+#statsPanel .stats-head h4{margin:0;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;}
+#statsPanel.collapsed .stats-head h4{display:none;}
+#statsToggleBtn{
+  background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;
+  width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+  border-radius:6px;flex-shrink:0;
+}
+#statsToggleBtn:hover{background:var(--accent-soft);color:#fff;}
+#statsToggleBtn .chev{display:inline-block;transition:transform .18s;}
+#statsPanel.collapsed #statsToggleBtn .chev{transform:rotate(180deg);}
+#statsPanel .stats-body{padding:14px;overflow-y:auto;flex:1;}
+#statsPanel.collapsed .stats-body{display:none;}
+.stats-total{text-align:center;padding-bottom:12px;}
+.stats-total .num{font-size:30px;font-weight:700;color:var(--text);line-height:1.1;}
+.stats-total .label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
+#statsPersonSection{display:none;}
+#statsPersonSection.show{display:block;}
+.stats-person-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
+.stats-person-name{font-size:14px;font-weight:700;color:var(--text);word-break:break-word;}
+#statsClearBtn{
+  background:none;border:1px solid var(--border-soft);color:var(--muted);border-radius:8px;
+  width:22px;height:22px;flex-shrink:0;cursor:pointer;font-size:11px;line-height:1;
+}
+#statsClearBtn:hover{background:var(--danger-soft);color:#fff;border-color:var(--danger);}
+.stats-row{
+  display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;
+  color:var(--muted);padding:7px 0;border-bottom:1px solid var(--border-soft);
+}
+.stats-row:last-child{border-bottom:none;}
+.stats-row .v{color:var(--text);font-weight:700;font-size:14px;}
+.card.selected .avatar{outline:3px solid var(--accent);outline-offset:3px;}
+
 /* ---------- Empty state ---------- */
 #emptyState{
   position:fixed;top:56%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);
@@ -327,6 +371,20 @@ input,select,textarea{font-family:inherit;}
   .modal{padding:16px;}
 
   #legend{left:10px;bottom:10px;max-width:180px;font-size:10px;}
+
+  /* the panel moves to a bottom sheet on mobile -- collapsed is just a
+     thin handle bar, expanded grows upward without covering the whole
+     screen; the toggle chevron rotates 90deg since collapsing now means
+     "down" instead of "right" */
+  #statsPanel{
+    top:auto;left:0;right:0;bottom:0;width:auto;max-height:38vh;
+    border-radius:14px 14px 0 0;border-left:none;border-right:none;border-bottom:none;
+    transition:max-height .18s ease;
+  }
+  #statsPanel.collapsed{max-height:46px;}
+  #statsToggleBtn .chev{transform:rotate(90deg);}
+  #statsPanel.collapsed #statsToggleBtn .chev{transform:rotate(-90deg);}
+  #addPersonFab.stats-open{bottom:calc(38vh + 16px);transition:bottom .18s ease;}
 
   #emptyState{padding:0 24px;}
   #emptyState h2{font-size:17px;}
@@ -397,6 +455,29 @@ input,select,textarea{font-family:inherit;}
   <div class="li"><span class="swatch dot"></span> Step / foster parent-child</div>
   <div class="li">Partner status shows as a heart between the couple (outline = divorced/separated); hover it to see the exact status</div>
   <div class="li">Each photo's ring color marks their family branch — a couple's heart blends both colors</div>
+</div>
+
+<div id="statsPanel">
+  <div class="stats-head" onclick="toggleStatsPanel()">
+    <h4>Tree Stats</h4>
+    <button id="statsToggleBtn" title="Collapse/expand"><span class="chev">❯</span></button>
+  </div>
+  <div class="stats-body">
+    <div class="stats-total">
+      <div class="num" id="statsTotalNum">0</div>
+      <div class="label">People in tree</div>
+    </div>
+    <div id="statsPersonSection">
+      <div class="subtle-divider"></div>
+      <div class="stats-person-head">
+        <div class="stats-person-name" id="statsPersonName"></div>
+        <button id="statsClearBtn" title="Clear selection" onclick="event.stopPropagation();clearSelection()">✕</button>
+      </div>
+      <div class="stats-row"><span>Siblings</span><span class="v" id="statsSiblings">0</span></div>
+      <div class="stats-row"><span>Children</span><span class="v" id="statsChildren">0</span></div>
+      <div class="stats-row"><span>Grandchildren</span><span class="v" id="statsGrandchildren">0</span></div>
+    </div>
+  </div>
 </div>
 
 
@@ -590,6 +671,8 @@ let showGrid = false;
 let view = { x: 0, y: 0, scale: 1 };
 let isPanning = false, panStart = {x:0,y:0}, viewStart = {x:0,y:0};
 let openMenuPersonId = null;
+let selectedPersonId = null;
+let statsPanelCollapsed = false;
 
 // modal context
 let personModalCtx = null; // {mode:'root'} | {mode:'relative', targetId, relType:'parent'|'child'|'partner'}
@@ -1092,11 +1175,15 @@ function render(){
   state.connections = state.connections.filter(c=>validIds.has(c.from) && validIds.has(c.to) && c.from!==c.to);
 
   document.getElementById('emptyState').style.display = state.people.length ? 'none':'block';
+  // the selected person may have just been deleted (by this viewer or
+  // another one sharing the tree) -- drop a selection that no longer exists
+  if(selectedPersonId && !state.people.some(p=>p.id===selectedPersonId)) selectedPersonId = null;
   lastLayout = computeLayout();
   const branchColors = computeBranchColors(lastLayout);
   renderCards(lastLayout, branchColors);
   renderConnections(lastLayout, branchColors);
   renderGridLines(lastLayout);
+  updateStatsPanel();
 }
 
 /* ----- lineage color-coding: each root ancestor gets a color, descendants
@@ -1163,11 +1250,12 @@ function renderCards(layout, branchColors){
     maxX = Math.max(maxX, pos.x + LAYOUT.cardW);
     maxY = Math.max(maxY, pos.y + LAYOUT.cardH);
     const card = document.createElement('div');
-    card.className = 'card' + (editMode ? ' editmode':'');
+    card.className = 'card' + (editMode ? ' editmode':'') + (p.id===selectedPersonId ? ' selected':'');
     card.style.left = pos.x+'px';
     card.style.top = pos.y+'px';
     card.style.setProperty('--branch-color', branchColors[p.id] || '');
     card.dataset.id = p.id;
+    card.onclick = ()=>selectPerson(p.id);
 
     const age = calcAge(p.dob);
     const genderClass = 'gender-'+(p.gender||'other');
@@ -1206,6 +1294,59 @@ function renderCards(layout, branchColors){
   document.getElementById('connLayer').setAttribute('height', Math.max(1400,maxY+400));
 }
 
+/* ----- selection + stats panel: click any card to see their sibling/
+   children/grandchildren counts, computed from the actual recorded
+   connections via the existing parentsOf/childrenOf helpers -- not the
+   layout's internal canonical-parent bookkeeping, which only keeps ONE
+   parent for positioning and would undercount someone with two recorded
+   parents. ----- */
+function selectPerson(id){
+  selectedPersonId = (selectedPersonId===id) ? null : id;
+  document.querySelectorAll('.card.selected').forEach(el=>el.classList.remove('selected'));
+  if(selectedPersonId){
+    const el = document.querySelector(`.card[data-id="${selectedPersonId}"]`);
+    if(el) el.classList.add('selected');
+  }
+  updateStatsPanel();
+}
+function clearSelection(){
+  if(!selectedPersonId) return;
+  selectedPersonId = null;
+  document.querySelectorAll('.card.selected').forEach(el=>el.classList.remove('selected'));
+  updateStatsPanel();
+}
+function applyStatsPanelState(){
+  document.getElementById('statsPanel').classList.toggle('collapsed', statsPanelCollapsed);
+  // on mobile the panel is a bottom sheet that would otherwise sit under the
+  // floating Add Person button -- lift the FAB clear of it while expanded
+  document.getElementById('addPersonFab').classList.toggle('stats-open', !statsPanelCollapsed);
+}
+function toggleStatsPanel(){
+  statsPanelCollapsed = !statsPanelCollapsed;
+  applyStatsPanelState();
+}
+function computeRelationshipStats(id){
+  const siblingSet = new Set();
+  parentsOf(id).forEach(pid=>{ childrenOf(pid).forEach(sid=>{ if(sid!==id) siblingSet.add(sid); }); });
+  const kids = childrenOf(id);
+  const grandkidSet = new Set();
+  kids.forEach(kid=>{ childrenOf(kid).forEach(gid=>grandkidSet.add(gid)); });
+  return { siblings: siblingSet.size, children: kids.length, grandchildren: grandkidSet.size };
+}
+function updateStatsPanel(){
+  document.getElementById('statsTotalNum').textContent = state.people.length;
+  const section = document.getElementById('statsPersonSection');
+  const p = selectedPersonId ? state.people.find(x=>x.id===selectedPersonId) : null;
+  if(!p){ section.classList.remove('show'); return; }
+  const stats = computeRelationshipStats(p.id);
+  document.getElementById('statsPersonName').textContent = p.name || 'Unnamed';
+  document.getElementById('statsSiblings').textContent = stats.siblings;
+  document.getElementById('statsChildren').textContent = stats.children;
+  document.getElementById('statsGrandchildren').textContent = stats.grandchildren;
+  section.classList.add('show');
+  if(statsPanelCollapsed){ statsPanelCollapsed=false; applyStatsPanelState(); }
+}
+
 function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
@@ -1222,6 +1363,9 @@ document.addEventListener('click', (e)=>{
   }
   if(!e.target.closest('#mobileMenu') && !e.target.closest('#hamburgerBtn')){
     closeMobileMenu();
+  }
+  if(!e.target.closest('.card') && !e.target.closest('#statsPanel')){
+    clearSelection();
   }
 });
 
