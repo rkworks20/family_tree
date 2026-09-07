@@ -199,6 +199,7 @@ input,select,textarea{font-family:inherit;}
   display:flex;align-items:center;justify-content:center;pointer-events:auto;
 }
 .heart-badge.clickable{cursor:pointer;}
+.heart-badge.dimmed{opacity:.15;}
 .heart-badge svg{width:19px;height:19px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.55));}
 .heart-badge .x{
   position:absolute;top:-7px;right:-9px;width:15px;height:15px;border-radius:50%;
@@ -282,9 +283,10 @@ input,select,textarea{font-family:inherit;}
 #statsPanel{
   position:fixed;top:66px;right:16px;bottom:16px;z-index:40;width:230px;
   background:var(--panel);border:1px solid var(--border);border-radius:12px;
-  box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:var(--shadow);display:none;flex-direction:column;overflow:hidden;
   transition:width .18s ease;
 }
+#statsPanel.shown{display:flex;}
 #statsPanel.collapsed{width:42px;}
 #statsPanel .stats-head{
   display:flex;align-items:center;justify-content:space-between;gap:6px;
@@ -336,6 +338,11 @@ input,select,textarea{font-family:inherit;}
   padding:6px 6px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .card.selected .avatar{outline:3px solid var(--accent);outline-offset:3px;}
+/* while someone is selected, anyone outside their immediate family (see
+   computeActiveSet) fades back -- still there, still clickable (to shift
+   focus to them instead), just visually out of the way */
+.card.dimmed{opacity:.22;filter:grayscale(.6);transition:opacity .15s,filter .15s;}
+.card.dimmed:hover{opacity:.45;}
 
 /* ---------- Empty state ---------- */
 #emptyState{
@@ -1269,12 +1276,14 @@ function renderCards(layout, branchColors){
   const layer = document.getElementById('cardLayer');
   layer.innerHTML = '';
   let maxX=0, maxY=0;
+  const activeSet = computeActiveSet(selectedPersonId);
   state.people.forEach(p=>{
     const pos = layout.pos[p.id];
     maxX = Math.max(maxX, pos.x + LAYOUT.cardW);
     maxY = Math.max(maxY, pos.y + LAYOUT.cardH);
     const card = document.createElement('div');
-    card.className = 'card' + (editMode ? ' editmode':'') + (p.id===selectedPersonId ? ' selected':'');
+    const isDimmed = activeSet && !activeSet.has(p.id);
+    card.className = 'card' + (editMode ? ' editmode':'') + (p.id===selectedPersonId ? ' selected':'') + (isDimmed ? ' dimmed':'');
     card.style.left = pos.x+'px';
     card.style.top = pos.y+'px';
     card.style.setProperty('--branch-color', branchColors[p.id] || '');
@@ -1318,26 +1327,56 @@ function renderCards(layout, branchColors){
   document.getElementById('connLayer').setAttribute('height', Math.max(1400,maxY+400));
 }
 
-/* ----- selection + stats panel: click any card to see their sibling/
-   children/grandchildren counts, computed from the actual recorded
-   connections via the existing parentsOf/childrenOf helpers -- not the
-   layout's internal canonical-parent bookkeeping, which only keeps ONE
-   parent for positioning and would undercount someone with two recorded
-   parents. ----- */
-function selectPerson(id){
-  selectedPersonId = (selectedPersonId===id) ? null : id;
-  document.querySelectorAll('.card.selected').forEach(el=>el.classList.remove('selected'));
-  if(selectedPersonId){
-    const el = document.querySelector(`.card[data-id="${selectedPersonId}"]`);
-    if(el) el.classList.add('selected');
+/* ----- selection + stats panel: click any card to bring up the panel and
+   see their sibling/children/grandchildren, computed from the actual
+   recorded connections via the existing parentsOf/childrenOf helpers --
+   not the layout's internal canonical-parent bookkeeping, which only
+   keeps ONE parent for positioning and would undercount someone with two
+   recorded parents. ----- */
+
+// everyone that counts as "immediate family" of a selected person, for the
+// focus/dim view: the person themselves, their partner(s), parents,
+// siblings, children and grandchildren -- and each of those people's own
+// partner too, so a highlighted person's spouse is never left dimmed right
+// next to them (they're drawn as one touching couple-unit either way).
+function computeActiveSet(id){
+  if(!id) return null;
+  const active = new Set();
+  const addWithPartners = pid=>{
+    if(active.has(pid)) return;
+    active.add(pid);
+    partnersOf(pid).forEach(x=>active.add(x));
+  };
+  addWithPartners(id);
+  parentsOf(id).forEach(addWithPartners);
+  const siblingIds = new Set();
+  parentsOf(id).forEach(pid=>childrenOf(pid).forEach(sid=>{ if(sid!==id) siblingIds.add(sid); }));
+  siblingIds.forEach(addWithPartners);
+  const kids = childrenOf(id);
+  kids.forEach(addWithPartners);
+  kids.forEach(kid=>childrenOf(kid).forEach(addWithPartners));
+  return active;
+}
+// re-draws cards and connectors from the layout already on hand (no need
+// to recompute positions -- selection never changes those) so the
+// selected/dimmed styling and the panel's shown/hidden state stay in sync
+function refreshFocusView(){
+  document.getElementById('statsPanel').classList.toggle('shown', !!selectedPersonId);
+  if(lastLayout){
+    const branchColors = computeBranchColors(lastLayout);
+    renderCards(lastLayout, branchColors);
+    renderConnections(lastLayout, branchColors);
   }
   updateStatsPanel();
+}
+function selectPerson(id){
+  selectedPersonId = (selectedPersonId===id) ? null : id;
+  refreshFocusView();
 }
 function clearSelection(){
   if(!selectedPersonId) return;
   selectedPersonId = null;
-  document.querySelectorAll('.card.selected').forEach(el=>el.classList.remove('selected'));
-  updateStatsPanel();
+  refreshFocusView();
 }
 function applyStatsPanelState(){
   document.getElementById('statsPanel').classList.toggle('collapsed', statsPanelCollapsed);
@@ -1459,6 +1498,14 @@ function renderConnections(layout, branchColors){
   const cardCenterBottom = id => ({x: layout.pos[id].x + LAYOUT.cardW/2, y: layout.pos[id].y + LAYOUT.cardH});
   const cardMidLeftRight = id => layout.pos[id].x + LAYOUT.cardW/2;
 
+  // while someone is selected, a connector fades unless it actually touches
+  // their immediate family (see computeActiveSet) -- same "still there,
+  // just out of the way" treatment as a dimmed card, not a hard cutoff
+  const activeSet = computeActiveSet(selectedPersonId);
+  const DIM_OPACITY = 0.12;
+  const dimUnless = (baseOpacity, ...ids) =>
+    (!activeSet || ids.some(id=>activeSet.has(id))) ? baseOpacity : DIM_OPACITY;
+
   const badges = []; // text-pill badges (parent-child), edit-mode only
   const partnerBadges = []; // "Married" style text pills, always visible (sit on the seam between partner cards)
 
@@ -1550,11 +1597,14 @@ function renderConnections(layout, branchColors){
   busJobs.forEach(job=>{
     const {members, kids, lineStartY, parentMidX, minX, maxX, busColor} = job;
     const stubY = job.stubYBase + job.offset;
+    // the shared stub+trunk stay full-strength if EITHER end could matter --
+    // the parent itself, or at least one of the kids hanging off it
+    const trunkOpacity = dimUnless(1, ...members, ...kids);
 
-    svg.appendChild(svgEl('line',{x1:parentMidX,y1:lineStartY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2}));
+    svg.appendChild(svgEl('line',{x1:parentMidX,y1:lineStartY,x2:parentMidX,y2:stubY,stroke:busColor,'stroke-width':2,opacity:trunkOpacity}));
 
     if(maxX > minX){
-      svg.appendChild(svgEl('line',{x1:minX,y1:stubY,x2:maxX,y2:stubY,stroke:busColor,'stroke-width':2}));
+      svg.appendChild(svgEl('line',{x1:minX,y1:stubY,x2:maxX,y2:stubY,stroke:busColor,'stroke-width':2,opacity:trunkOpacity}));
     }
 
     kids.forEach(cid=>{
@@ -1562,7 +1612,7 @@ function renderConnections(layout, branchColors){
       const conn = state.connections.find(c=>c.type==='parent-child' && c.to===cid && members.includes(c.from));
       const style = PC_STYLE[(conn&&conn.subtype)||'biological'];
       const x = cardMidLeftRight(cid);
-      svg.appendChild(svgEl('line',{x1:x,y1:stubY,x2:top.x,y2:top.y,stroke:busColor,'stroke-width':2,'stroke-dasharray':style.dash==='none'?'':style.dash,opacity:style.opacity}));
+      svg.appendChild(svgEl('line',{x1:x,y1:stubY,x2:top.x,y2:top.y,stroke:busColor,'stroke-width':2,'stroke-dasharray':style.dash==='none'?'':style.dash,opacity:dimUnless(style.opacity, cid)}));
       if(conn && editMode){
         badges.push({x:x,y:(stubY+top.y)/2, id:conn.id, label: conn.label || capitalize(conn.subtype||'biological')});
       }
@@ -1586,9 +1636,10 @@ function renderConnections(layout, branchColors){
     const x2 = layout.pos[members[1]].x;
     const mx = (x1+x2)/2;
     const color = blendColors(branchColors[members[0]]||'#8b91a7', branchColors[members[1]]||'#8b91a7');
-    svg.appendChild(svgEl('line',{x1:x1-LAYOUT.cardW/2+AVATAR_R,y1:y,x2:mx-9,y2:y,stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,4'}));
-    svg.appendChild(svgEl('line',{x1:mx+9,y1:y,x2:x2+LAYOUT.cardW/2-AVATAR_R,y2:y,stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,4'}));
-    partnerBadges.push({x:mx, y:y, id:conn.id, color, outline:conn.subtype==='divorced'||conn.subtype==='separated', title: conn.label || capitalize(conn.subtype||'partner')});
+    const heartOpacity = dimUnless(1, members[0], members[1]);
+    svg.appendChild(svgEl('line',{x1:x1-LAYOUT.cardW/2+AVATAR_R,y1:y,x2:mx-9,y2:y,stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,4',opacity:heartOpacity}));
+    svg.appendChild(svgEl('line',{x1:mx+9,y1:y,x2:x2+LAYOUT.cardW/2-AVATAR_R,y2:y,stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,4',opacity:heartOpacity}));
+    partnerBadges.push({x:mx, y:y, id:conn.id, color, outline:conn.subtype==='divorced'||conn.subtype==='separated', title: conn.label || capitalize(conn.subtype||'partner'), dimmed: heartOpacity<1});
   });
 
   // ---- extra partner connections (not used for unit grouping) ----
@@ -1599,9 +1650,10 @@ function renderConnections(layout, branchColors){
     const bx = b.x+LAYOUT.cardW/2, by = b.y+44;
     const color = blendColors(branchColors[c.from]||'#8b91a7', branchColors[c.to]||'#8b91a7');
     const midX=(ax+bx)/2, midY=(ay+by)/2 - 40;
-    const path = svgEl('path',{d:`M ${ax} ${ay} Q ${midX} ${midY}, ${bx} ${by}`,fill:'none',stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,5',opacity:.8});
+    const extraOpacity = dimUnless(.8, c.from, c.to);
+    const path = svgEl('path',{d:`M ${ax} ${ay} Q ${midX} ${midY}, ${bx} ${by}`,fill:'none',stroke:color,'stroke-width':1.5,'stroke-dasharray':'3,5',opacity:extraOpacity});
     svg.appendChild(path);
-    partnerBadges.push({x:midX, y:midY, id:c.id, color, outline:c.subtype==='divorced'||c.subtype==='separated', title:(c.label || capitalize(c.subtype||'partner'))+' (extra)'});
+    partnerBadges.push({x:midX, y:midY, id:c.id, color, outline:c.subtype==='divorced'||c.subtype==='separated', title:(c.label || capitalize(c.subtype||'partner'))+' (extra)', dimmed: extraOpacity<.8});
   });
 
   // ---- badges overlay (HTML, so we can click) ----
@@ -1616,7 +1668,7 @@ function renderConnections(layout, branchColors){
   });
   partnerBadges.forEach(b=>{
     const el = document.createElement('div');
-    el.className = 'heart-badge' + (editMode ? ' clickable' : '');
+    el.className = 'heart-badge' + (editMode ? ' clickable' : '') + (b.dimmed ? ' dimmed' : '');
     el.style.left = b.x+'px'; el.style.top = b.y+'px';
     el.title = b.title;
     el.innerHTML = heartIconSVG(b.color, b.outline) + (editMode ? `<span class="x" onclick="event.stopPropagation();quickRemoveConn('${b.id}')">×</span>` : '');
